@@ -60,9 +60,11 @@ nav:
   - Getting Started:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quickstart.md
+      - Development Guide: getting-started/development.md
   - Architecture:
       - Overview: architecture/overview.md
       - Pipeline: architecture/pipeline.md
+      - Pipeline Flow: architecture/pipeline-flow.md
       - Project Structure: architecture/structure.md
   - API Reference:
       - Endpoints: api/endpoints.md
