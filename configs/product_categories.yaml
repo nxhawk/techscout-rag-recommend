@@ -1,0 +1,48 @@
+# Product Categories & Required Fields
+categories:
+  smartphone:
+    display_name: "Điện thoại"
+    required_fields:
+      - screen_size
+      - processor
+      - ram
+      - storage
+      - battery
+      - rear_camera
+      - front_camera
+      - os
+    optional_fields:
+      - weight
+      - dimensions
+      - 5g_support
+      - nfc
+      - water_resistance
+
+  laptop:
+    display_name: "Laptop"
+    required_fields:
+      - screen_size
+      - processor
+      - ram
+      - storage
+      - battery_life
+      - gpu
+      - os
+    optional_fields:
+      - weight
+      - keyboard_type
+      - ports
+      - webcam
+
+  headphone:
+    display_name: "Tai nghe"
+    required_fields:
+      - type  # over-ear, in-ear, on-ear
+      - connectivity  # wired, wireless, both
+      - driver_size
+      - battery_life
+      - noise_cancelling
+    optional_fields:
+      - frequency_response
+      - impedance
+      - weight

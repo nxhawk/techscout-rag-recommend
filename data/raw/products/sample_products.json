@@ -1,0 +1,74 @@
+[
+  {
+    "id": "iphone-15-pro-max",
+    "name": "iPhone 15 Pro Max",
+    "brand": "Apple",
+    "category": "smartphone",
+    "price": 29990000,
+    "currency": "VND",
+    "specifications": {
+      "screen_size": "6.7 inch",
+      "processor": "A17 Pro",
+      "ram": "8 GB",
+      "storage": ["256 GB", "512 GB", "1 TB"],
+      "battery": "4441 mAh",
+      "rear_camera": "48 MP + 12 MP + 12 MP",
+      "front_camera": "12 MP",
+      "os": "iOS 17"
+    },
+    "description": "Flagship cao cấp nhất của Apple với chip A17 Pro, camera 48MP và khung titanium.",
+    "pros": ["Camera xuất sắc", "Hiệu năng mạnh nhất", "Khung titanium cao cấp", "Action Button mới"],
+    "cons": ["Giá cao", "Sạc chậm hơn đối thủ Android", "Không có sạc kèm hộp"],
+    "avg_rating": 4.7,
+    "review_count": 1250,
+    "tags": ["flagship", "cao cấp", "chụp ảnh", "gaming"]
+  },
+  {
+    "id": "samsung-s24-ultra",
+    "name": "Samsung Galaxy S24 Ultra",
+    "brand": "Samsung",
+    "category": "smartphone",
+    "price": 31990000,
+    "currency": "VND",
+    "specifications": {
+      "screen_size": "6.8 inch",
+      "processor": "Snapdragon 8 Gen 3",
+      "ram": "12 GB",
+      "storage": ["256 GB", "512 GB", "1 TB"],
+      "battery": "5000 mAh",
+      "rear_camera": "200 MP + 50 MP + 12 MP + 10 MP",
+      "front_camera": "12 MP",
+      "os": "Android 14 (One UI 6.1)"
+    },
+    "description": "Flagship Android hàng đầu với S Pen, camera 200MP và tính năng Galaxy AI.",
+    "pros": ["Camera 200MP zoom 100x", "S Pen tích hợp", "Galaxy AI thông minh", "Pin 5000mAh"],
+    "cons": ["Nặng và to", "Giá rất cao", "One UI có nhiều bloatware"],
+    "avg_rating": 4.6,
+    "review_count": 980,
+    "tags": ["flagship", "cao cấp", "S Pen", "AI", "zoom"]
+  },
+  {
+    "id": "xiaomi-14",
+    "name": "Xiaomi 14",
+    "brand": "Xiaomi",
+    "category": "smartphone",
+    "price": 13990000,
+    "currency": "VND",
+    "specifications": {
+      "screen_size": "6.36 inch",
+      "processor": "Snapdragon 8 Gen 3",
+      "ram": "12 GB",
+      "storage": ["256 GB", "512 GB"],
+      "battery": "4610 mAh",
+      "rear_camera": "50 MP + 50 MP + 50 MP (Leica)",
+      "front_camera": "32 MP",
+      "os": "Android 14 (HyperOS)"
+    },
+    "description": "Flagship compact với camera Leica, chip Snapdragon 8 Gen 3 và giá cạnh tranh.",
+    "pros": ["Camera Leica chất lượng", "Giá tốt so với cấu hình", "Gọn nhẹ", "Sạc nhanh 90W"],
+    "cons": ["MIUI có quảng cáo", "Ít phụ kiện chính hãng tại VN"],
+    "avg_rating": 4.5,
+    "review_count": 650,
+    "tags": ["flagship", "Leica", "compact", "giá tốt"]
+  }
+]

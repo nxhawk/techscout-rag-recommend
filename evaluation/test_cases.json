@@ -1,0 +1,25 @@
+[
+  {
+    "id": "rec_01",
+    "type": "recommend",
+    "query": "Tôi muốn mua điện thoại chụp ảnh đẹp, tầm 15 triệu",
+    "expected_category": "smartphone",
+    "expected_price_range": [12000000, 18000000],
+    "expected_features": ["camera"]
+  },
+  {
+    "id": "rec_02",
+    "type": "recommend",
+    "query": "Laptop cho sinh viên học IT, dưới 20 triệu",
+    "expected_category": "laptop",
+    "expected_price_range": [0, 20000000],
+    "expected_features": ["performance", "storage"]
+  },
+  {
+    "id": "cmp_01",
+    "type": "compare",
+    "query": "So sánh iPhone 15 Pro Max và Samsung Galaxy S24 Ultra",
+    "expected_products": ["iPhone 15 Pro Max", "Samsung Galaxy S24 Ultra"],
+    "expected_criteria": ["camera", "processor", "battery", "price"]
+  }
+]

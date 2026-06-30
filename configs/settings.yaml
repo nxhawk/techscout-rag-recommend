@@ -1,0 +1,22 @@
+# Main Settings
+project_name: "RAG Product Recommendation"
+environment: "development"
+
+# LLM
+llm_provider: "anthropic"
+llm_model: "claude-sonnet-4-6"
+llm_max_tokens: 2048
+llm_temperature: 0.3
+
+# Embedding
+embedding_provider: "openai"
+embedding_model: "text-embedding-3-small"
+
+# Vector Database
+vector_db: "chroma"
+vector_db_path: "./data/embeddings"
+
+# Retrieval
+top_k_retrieve: 20
+top_k_recommend: 5
+top_k_compare: 3

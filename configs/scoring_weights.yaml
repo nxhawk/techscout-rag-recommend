@@ -1,0 +1,25 @@
+# Scoring Weights for Recommendation
+default:
+  relevance: 0.35
+  review: 0.25
+  value: 0.25
+  popularity: 0.15
+
+# Overrides by use case
+gaming:
+  relevance: 0.40
+  review: 0.20
+  value: 0.20
+  popularity: 0.20
+
+photography:
+  relevance: 0.40
+  review: 0.30
+  value: 0.15
+  popularity: 0.15
+
+budget:
+  relevance: 0.25
+  review: 0.20
+  value: 0.40
+  popularity: 0.15
