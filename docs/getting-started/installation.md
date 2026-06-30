@@ -23,7 +23,7 @@
 ## Clone and Install
 
 ```bash
-git clone https://github.com/<username>/rag-product-recommend.git
+git clone https://github.com/nxhawk/rag-product-recommend.git
 cd rag-product-recommend
 uv sync
 ```

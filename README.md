@@ -214,7 +214,7 @@ docker compose up --build
 
 ## Documentation
 
-Full documentation is available at the [project docs site](https://<username>.github.io/rag-product-recommend/) (deployed via GitHub Pages).
+Full documentation is available at the [project docs site](https://nxhawk.github.io/rag-product-recommend/) (deployed via GitHub Pages).
 
 To serve locally:
 
