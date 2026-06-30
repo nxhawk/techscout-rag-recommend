@@ -69,6 +69,8 @@ nav:
   - API Reference:
       - Endpoints: api/endpoints.md
       - Schemas: api/schemas.md
+  - Deployment:
+      - Docker: deployment/docker.md
   - Development:
       - Contributing: development/contributing.md
       - Testing: development/testing.md
