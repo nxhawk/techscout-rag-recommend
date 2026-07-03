@@ -74,6 +74,8 @@ plugins:
             Development Guide: Hướng dẫn phát triển
             Architecture: Kiến trúc
             Overview: Tổng quan
+            C4 Model: Mô hình C4
+            Data Flow: Luồng dữ liệu
             Pipeline: Pipeline
             Pipeline Flow: Luồng xử lý
             Project Structure: Cấu trúc dự án
@@ -95,6 +97,8 @@ nav:
       - Development Guide: getting-started/development.md
   - Architecture:
       - Overview: architecture/overview.md
+      - C4 Model: architecture/c4-model.md
+      - Data Flow: architecture/data-flow.md
       - Pipeline: architecture/pipeline.md
       - Pipeline Flow: architecture/pipeline-flow.md
       - Project Structure: architecture/structure.md

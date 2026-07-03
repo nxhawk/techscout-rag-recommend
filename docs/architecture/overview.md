@@ -114,3 +114,8 @@ Takes the retrieved products and user intent, fills a prompt template, and calls
 ## Orchestration (`src/pipeline/`)
 
 The pipeline layer ties everything together. The `RAGRouter` classifies incoming queries (recommend, compare, info, hybrid) and delegates to the appropriate pipeline. Each pipeline orchestrates the full flow from query to response.
+
+## See Also
+
+- [C4 Model](c4-model.md) — Context, Container, and Component diagrams of the system.
+- [Data Flow](data-flow.md) — data formats and storage as they move through ingestion and per-request processing.

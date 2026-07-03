@@ -114,3 +114,8 @@ Lấy các sản phẩm đã truy xuất cùng ý định người dùng, điề
 ## Điều phối (`src/pipeline/`)
 
 Tầng pipeline kết nối mọi thứ lại với nhau. `RAGRouter` phân loại các truy vấn đến (gợi ý, so sánh, thông tin, hybrid) và điều hướng tới pipeline phù hợp. Mỗi pipeline điều phối toàn bộ luồng từ truy vấn đến phản hồi.
+
+## Xem thêm
+
+- [Mô hình C4](c4-model.vi.md) — sơ đồ Context, Container, và Component của hệ thống.
+- [Luồng dữ liệu](data-flow.vi.md) — định dạng dữ liệu và nơi lưu trữ khi di chuyển qua ingestion và xử lý theo request.
