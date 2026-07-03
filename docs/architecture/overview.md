@@ -2,24 +2,95 @@
 
 The system follows a standard RAG architecture with four core layers:
 
-## High-Level Flow
+## End-to-End Flow
+
+The diagram below covers the full system: the **offline** ingestion path that populates the vector store, and the **online** path that serves a single user query.
 
 ```mermaid
 flowchart TD
-    A[User Query] --> B[RAG Router]
-    B -->|Recommend| C[Recommend Pipeline]
-    B -->|Compare| D[Compare Pipeline]
-    B -->|Info/Search| E[Search]
-    C --> F[Intent Parser]
-    F --> G[Filter + Retrieve]
-    G --> H[Rerank]
-    H --> I[Score + Rank]
-    I --> J[LLM Generation]
-    D --> K[Extract Products]
-    K --> L[Retrieve Specs]
-    L --> M[Align + Compare]
-    M --> J
-    J --> N[JSON Response]
+    subgraph Offline["Data Ingestion (offline, batch)"]
+        direction TB
+        SRC["E-commerce sites\n(TGDD, CellphoneS)"] --> CRAWL[Crawler]
+        CRAWL --> RAW[("data/raw/crawled/")]
+        RAW --> CLEAN[DataCleaner]
+        CLEAN --> SPEC[SpecParser]
+        SPEC --> CHUNK["Chunker\n(field-based chunks)"]
+        CHUNK --> EMBED[ProductEmbedder]
+        EMBED --> VDB[("ChromaDB\nvectors + metadata")]
+    end
+
+    subgraph Online["Query Processing (online, per-request)"]
+        direction TB
+        Q[User Query] --> GIN["Guardrails\n(input check)"]
+        GIN --> ROUTER{RAG Router}
+
+        ROUTER -->|RECOMMEND| RI[UserIntentParser]
+        RI --> RF[FilterEngine]
+        RF --> RR[ProductRetriever]
+        RR --> RRK[CrossEncoderReranker]
+        RRK --> RSC[ProductScorer]
+
+        ROUTER -->|COMPARE| CX[Extract Products]
+        CX --> CR[ProductRetriever]
+        CR --> CAL[SpecAligner]
+        CAL --> CFM[ComparisonFormatter]
+
+        RSC --> LLM["LLM Client\n(Anthropic / OpenAI / Gemini)"]
+        CFM --> LLM
+        LLM --> RP[ResponseParser]
+        RP --> GOUT["Guardrails\n(output check)"]
+        GOUT --> RESP[JSON Response]
+    end
+
+    VDB -.->|vector + metadata search| RR
+    VDB -.->|vector + metadata search| CR
+```
+
+## End-to-End Sequence
+
+The sequence diagram below shows the same online path as a single request timeline, including the `RECOMMEND` vs `COMPARE` branch.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as FastAPI Route
+    participant Guard as Guardrails
+    participant Router as RAGRouter
+    participant Pipe as Recommend/Compare Pipeline
+    participant VDB as ChromaDB
+    participant LLM as LLM Client
+
+    User->>API: POST /api/recommend or /api/compare
+    API->>Guard: validate input
+    Guard-->>API: ok
+
+    API->>Router: classify(query)
+    Router-->>API: RECOMMEND | COMPARE
+
+    alt RECOMMEND
+        API->>Pipe: RecommendPipeline.run(query)
+        Pipe->>Pipe: UserIntentParser.parse(query)
+        Pipe->>Pipe: FilterEngine.extract(query)
+        Pipe->>VDB: query(vector, filters)
+        VDB-->>Pipe: candidates
+        Pipe->>Pipe: CrossEncoderReranker.rerank(candidates)
+        Pipe->>Pipe: ProductScorer.score(candidates)
+    else COMPARE
+        API->>Pipe: ComparePipeline.run(query)
+        Pipe->>VDB: fetch products (by query or product_ids)
+        VDB-->>Pipe: products
+        Pipe->>Pipe: SpecAligner.align(products)
+        Pipe->>Pipe: ComparisonFormatter.format(aligned)
+    end
+
+    Pipe->>LLM: generate(prompt_with_context)
+    LLM-->>Pipe: raw text response
+    Pipe->>Pipe: ResponseParser.parse(raw)
+    Pipe-->>API: structured result
+
+    API->>Guard: validate output
+    Guard-->>API: ok
+    API-->>User: JSON Response
 ```
 
 ## Core Layers
