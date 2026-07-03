@@ -13,6 +13,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write
 
 concurrency:
   group: "pages"
@@ -36,8 +37,26 @@ jobs:
       - name: Build docs
         run: uv run mkdocs build --strict
 
+      - name: Verify site output
+        run: test -f site/index.html
+
+      # Re-running the build job accumulates multiple "github-pages" artifacts in the
+      # same workflow run; deploy-pages requires exactly one. Remove stale copies first.
+      - name: Remove stale Pages artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ids=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
+            --paginate -q '.artifacts[] | select(.name=="github-pages") | .id' || true)
+          if [ -n "$ids" ]; then
+            echo "$ids" | while read -r id; do
+              echo "Deleting artifact $id"
+              gh api "repos/${{ github.repository }}/actions/artifacts/${id}" -X DELETE
+            done
+          fi
+
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: site/
 
@@ -50,4 +69,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
