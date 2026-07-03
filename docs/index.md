@@ -2,7 +2,7 @@
 
 A product recommendation and comparison system powered by **Retrieval-Augmented Generation (RAG)**.
 
-Users ask natural language queries, the system retrieves relevant product data from a vector database, then an LLM generates contextual, well-reasoned answers.
+Users ask natural language queries, the system retrieves relevant product data from a vector database, then an LLM generates contextual, well-reasoned answers
 
 ## Key Features
 
