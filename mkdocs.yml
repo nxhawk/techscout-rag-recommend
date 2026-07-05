@@ -77,6 +77,7 @@ plugins:
             C4 Model: Mô hình C4
             Data Flow: Luồng dữ liệu
             Write Path: Luồng ghi dữ liệu
+            CDC Sync: Đồng bộ CDC
             Pipeline: Pipeline
             Pipeline Flow: Luồng xử lý
             Hybrid Retrieval: Truy xuất lai
@@ -105,6 +106,7 @@ nav:
       - C4 Model: architecture/c4-model.md
       - Data Flow: architecture/data-flow.md
       - Write Path: architecture/write-path.md
+      - CDC Sync: architecture/cdc.md
       - Pipeline: architecture/pipeline.md
       - Pipeline Flow: architecture/pipeline-flow.md
       - Hybrid Retrieval: architecture/hybrid-retrieval.md
