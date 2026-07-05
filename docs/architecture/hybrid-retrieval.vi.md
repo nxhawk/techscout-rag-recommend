@@ -14,13 +14,13 @@ flowchart TB
     subgraph Dense["Nhánh dense — semantic"]
         Q --> EMB["ProductEmbedder.embed_text()<br/><i>src/embedding/product_embedder.py</i>"]
         EMB --> VS["VectorStore.query()<br/>pgvector HNSW, cosine<br/><i>src/embedding/vector_store.py</i>"]
-        FE -->|"SQL WHERE (brand, category,<br/>khoảng giá, rating)"| VS
+        FE -->|"pre-filter: SQL WHERE (brand,<br/>category, khoảng giá, rating)"| VS
         VS --> SS["SimilarityScorer<br/><i>src/retrieval/similarity_scorer.py</i>"]
     end
 
     subgraph Sparse["Nhánh sparse — keyword"]
         Q --> BM25["BM25Index.search()<br/><i>src/retrieval/keyword_search.py</i>"]
-        FE -->|"cùng bộ filter,<br/>áp lại bằng Python"| PF["HybridSearch._matches_filters()"]
+        FE -->|"post-filter: cùng bộ filter,<br/>áp lại bằng Python"| PF["HybridSearch._matches_filters()"]
         BM25 --> PF
     end
 
@@ -65,6 +65,41 @@ score(q, d) = Σ_t∈q  IDF(t) · tf(t,d)·(k1+1) / ( tf(t,d) + k1·(1 - b + b·
 - **Đồng bộ filter** — bộ filter mà nhánh dense đẩy xuống SQL được áp lại
   bằng Python (`HybridSearch._matches_filters`) cho từng hit BM25, nên nhánh
   keyword không thể tuồn sản phẩm vượt giá hay sai brand vào context của LLM.
+
+## Lọc diễn ra ở đâu: pre-filter vs post-filter
+
+Cả hai nhánh đều thực thi **cùng một** bộ filter từ
+`FilterEngine.extract_filters()` (brand, category, khoảng giá, rating tối
+thiểu), nhưng ở hai điểm *ngược nhau* trong pipeline:
+
+| | Dense (semantic) | Sparse (BM25) |
+|---|---|---|
+| Chiến lược | **Pre-filter** (lọc trước, search sau) | **Post-filter** (search trước, lọc sau) |
+| Vị trí | SQL `WHERE` ngay trong câu query pgvector (`ProductRetriever._build_where_clause()`) | Python, sau khi search (`HybridSearch._matches_filters()`) |
+| Phạm vi search | Chỉ các row đã thỏa filter | **Toàn bộ** index trong RAM |
+| Số kết quả | Luôn đủ tới `top_k × 2` (nếu DB đủ row khớp) | `keyword_candidates` (50) hit **trừ đi** số bị filter loại |
+
+- **Dense = lọc trước, search sau.** Filter trở thành điều kiện SQL `WHERE`
+  trong *chính* câu query chạy cosine search, nên Postgres chỉ xếp hạng các
+  row đã thỏa category/giá/brand/rating. Sản phẩm không khớp không bao giờ
+  thành ứng viên.
+- **Sparse = search trước, lọc sau.** `BM25Index` là index in-memory thuần,
+  không biết gì về metadata: `BM25Index.search()` chấm điểm toàn bộ corpus,
+  trả về top `keyword_candidates` (50) hit, rồi *sau đó* `_matches_filters()`
+  mới loại các hit sai category, giá ngoài `price_min`/`price_max`, v.v.
+
+!!! tip "BM25 không chạm vào database"
+    Nhánh sparse **không thực thi SQL nào lúc query**. `BM25Index` giữ một
+    snapshot in-memory lấy từ `VectorStore.list_documents()` lúc khởi động —
+    cũng vì vậy mà filter của nó phải áp lại bằng Python thay vì đẩy xuống
+    thành điều kiện `WHERE`.
+
+Hệ quả thực tế của post-filter: nếu phần lớn trong 50 candidates BM25 rớt
+filter (ví dụ ngân sách chặt), nhánh keyword có thể đóng góp rất ít hoặc
+không có kết quả — nó **không** quay lại lấy thêm để bù. Kết quả fusion khi
+đó nghiêng về nhánh dense, vốn luôn lấy đủ chỉ tiêu từ database. Tuy vậy,
+đảm bảo cuối cùng của hai đường là như nhau: không sản phẩm nào vi phạm
+filter đã trích xuất có thể lọt vào RRF hay context của LLM.
 
 ## Hợp nhất: Reciprocal Rank Fusion (RRF)
 

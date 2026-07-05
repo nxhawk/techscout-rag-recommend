@@ -15,13 +15,13 @@ flowchart TB
     subgraph Dense["Dense branch — semantic"]
         Q --> EMB["ProductEmbedder.embed_text()<br/><i>src/embedding/product_embedder.py</i>"]
         EMB --> VS["VectorStore.query()<br/>pgvector HNSW, cosine<br/><i>src/embedding/vector_store.py</i>"]
-        FE -->|"SQL WHERE (brand, category,<br/>price range, rating)"| VS
+        FE -->|"pre-filter: SQL WHERE (brand,<br/>category, price range, rating)"| VS
         VS --> SS["SimilarityScorer<br/><i>src/retrieval/similarity_scorer.py</i>"]
     end
 
     subgraph Sparse["Sparse branch — keyword"]
         Q --> BM25["BM25Index.search()<br/><i>src/retrieval/keyword_search.py</i>"]
-        FE -->|"same filters,<br/>re-applied in Python"| PF["HybridSearch._matches_filters()"]
+        FE -->|"post-filter: same filters,<br/>re-applied in Python"| PF["HybridSearch._matches_filters()"]
         BM25 --> PF
     end
 
@@ -68,6 +68,42 @@ score(q, d) = Σ_t∈q  IDF(t) · tf(t,d)·(k1+1) / ( tf(t,d) + k1·(1 - b + b·
   re-applied in Python (`HybridSearch._matches_filters`) to every BM25 hit,
   so the keyword branch cannot leak over-budget or wrong-brand products into
   the LLM context.
+
+## Where filtering happens: pre-filter vs post-filter
+
+Both branches enforce the **same** filter set from
+`FilterEngine.extract_filters()` (brand, category, price range, min rating),
+but at *opposite* points in their pipelines:
+
+| | Dense (semantic) | Sparse (BM25) |
+|---|---|---|
+| Strategy | **Pre-filter** | **Post-filter** |
+| Where | SQL `WHERE` inside the pgvector query (`ProductRetriever._build_where_clause()`) | Python, after search (`HybridSearch._matches_filters()`) |
+| What is searched | Only rows that already satisfy the filters | The **entire** in-memory index |
+| Result count | Always up to `top_k × 2` (if enough rows match) | `keyword_candidates` (50) hits **minus** whatever the filter rejects |
+
+- **Dense = filter first, then search.** The filters become SQL `WHERE`
+  conditions in the *same* query that runs the cosine search, so Postgres only
+  ranks rows that already satisfy category/price/brand/rating. Non-matching
+  products are never candidates.
+- **Sparse = search first, then filter.** `BM25Index` is a plain in-memory
+  index with no metadata awareness: `BM25Index.search()` scores the whole
+  corpus, returns the top `keyword_candidates` (50) hits, and only *then*
+  does `_matches_filters()` drop hits with the wrong category, a price outside
+  `price_min`/`price_max`, etc.
+
+!!! tip "BM25 never touches the database"
+    The sparse branch executes **no SQL at query time**. `BM25Index` holds an
+    in-memory snapshot taken from `VectorStore.list_documents()` at startup —
+    which is also why its filters must be re-applied in Python rather than
+    pushed down as `WHERE` conditions.
+
+One practical consequence of post-filtering: if most of the 50 BM25 candidates
+fail the filters (e.g. a tight budget), the keyword branch may contribute few
+or zero results — it does **not** go back for more. The fused output then
+leans on the dense branch, which always fills its quota from the database.
+The end guarantee is identical on both paths, though: no product violating
+the extracted filters can reach RRF or the LLM context.
 
 ## Fusion: Reciprocal Rank Fusion (RRF)
 
