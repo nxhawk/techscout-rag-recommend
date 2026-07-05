@@ -122,6 +122,27 @@ class VectorStore:
             "distances": [[float(row[3]) for row in rows]],
         }
 
+    def list_documents(self, limit: int | None = None) -> dict:
+        """Return all ids/documents/metadatas (no embeddings).
+
+        Used to build in-memory keyword indexes (BM25) at startup. Shaped like
+        ``{"ids": [...], "documents": [...], "metadatas": [...]}`` (flat lists,
+        single snapshot - not the nested per-query shape of ``query``).
+        """
+        sql = f"SELECT id, document, metadata FROM {self.table_name} ORDER BY id"
+        params: list[Any] = []
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(limit)
+        with self.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return {
+            "ids": [row[0] for row in rows],
+            "documents": [row[1] for row in rows],
+            "metadatas": [row[2] for row in rows],
+        }
+
     def delete_collection(self) -> None:
         """Drop the table backing the current collection."""
         self.conn.execute(f"DROP TABLE IF EXISTS {self.table_name}")

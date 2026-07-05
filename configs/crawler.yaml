@@ -44,4 +44,9 @@ sources:
     categories:
       smartphone: "/mobile.html?p={page}"
       laptop: "/laptop.html?p={page}"
-    # reviews_url: "https://cellphones.com.vn/api/reviews?slug={slug}&page={page}"
+    # Comment GraphQL API (verified via network capture 2026-07). The spider
+    # POSTs a COMMENTS query with the parent product id from the detail HTML.
+    reviews_url: "https://api.cellphones.com.vn/graphql-customer/graphql/query"
+    # "product" = Q&A/comment feed. If scripts/probe_comment_api.py confirms a
+    # rating feed (starred reviews), switch this to that type value.
+    reviews_query_type: "product"

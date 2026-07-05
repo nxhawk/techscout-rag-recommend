@@ -29,6 +29,13 @@ class PipelineConfig:
     top_k_recommend: int = 5
     top_k_compare: int = 3
 
+    # Hybrid retrieval (BM25 + RRF) & reranking
+    use_bm25: bool = True
+    rrf_k: int = 60
+    keyword_candidates: int = 50
+    use_reranker: bool = False
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
     @classmethod
     def from_yaml(cls, filepath: str) -> "PipelineConfig":
         with open(filepath, "r") as f:

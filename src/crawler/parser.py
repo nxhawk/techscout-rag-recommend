@@ -58,6 +58,153 @@ def clean_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
+# -- Structured-data helpers (JSON-LD / meta tags) ----------------------------
+
+
+def parse_json_ld_blocks(soup: BeautifulSoup | Tag) -> list[dict]:
+    """Return every JSON-LD object found in <script type="application/ld+json">.
+
+    Handles top-level arrays and ``@graph`` wrappers. Invalid JSON is skipped.
+    """
+    blocks: list[dict] = []
+    for script in soup.select("script[type='application/ld+json']"):
+        data = json_loads_safe(script.string or script.get_text())
+        if data is None:
+            continue
+        items = data if isinstance(data, list) else [data]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            graph = item.get("@graph")
+            if isinstance(graph, list):
+                blocks.extend(x for x in graph if isinstance(x, dict))
+            else:
+                blocks.append(item)
+    return blocks
+
+
+def find_product_json_ld(soup: BeautifulSoup | Tag) -> dict:
+    """Return the first JSON-LD block whose @type is (or includes) Product."""
+    for block in parse_json_ld_blocks(soup):
+        raw_type = block.get("@type")
+        types = raw_type if isinstance(raw_type, list) else [raw_type]
+        if any(str(t).lower() == "product" for t in types if t):
+            return block
+    return {}
+
+
+def json_ld_price(product_ld: dict) -> int:
+    """Extract an integer price from a JSON-LD Product ``offers`` payload."""
+    offers = product_ld.get("offers")
+    candidates = offers if isinstance(offers, list) else [offers]
+    for offer in candidates:
+        if not isinstance(offer, dict):
+            continue
+        for key in ("price", "lowPrice", "highPrice"):
+            value = offer.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                number = int(float(str(value).replace(",", "")))
+            except ValueError:
+                continue
+            if number > 0:
+                return number
+    return 0
+
+
+def json_ld_rating(product_ld: dict) -> tuple[float, int]:
+    """Extract (avg_rating, review_count) from a JSON-LD ``aggregateRating``."""
+    agg = product_ld.get("aggregateRating")
+    if not isinstance(agg, dict):
+        return 0.0, 0
+    rating = parse_rating(str(agg.get("ratingValue", "")))
+    count = 0
+    for key in ("reviewCount", "ratingCount"):
+        value = agg.get(key)
+        if value not in (None, ""):
+            try:
+                count = int(float(str(value).replace(".", "").replace(",", "")))
+            except ValueError:
+                continue
+            break
+    return rating, count
+
+
+def meta_content(soup: BeautifulSoup | Tag, *names: str) -> str:
+    """Return the first non-empty <meta> content among `names`.
+
+    Each name is matched against ``property``, ``name`` and ``itemprop``.
+    """
+    for name in names:
+        el = soup.select_one(
+            f"meta[property='{name}'], meta[name='{name}'], meta[itemprop='{name}']"
+        )
+        if el:
+            content = el.get("content")
+            if isinstance(content, str) and content.strip():
+                return clean_ws(content)
+    return ""
+
+
+# "4.9 (366 đánh giá)" — rating summary shown next to the product title.
+_RATING_SUMMARY_RE = re.compile(
+    r"(\d(?:[.,]\d)?)\s*\(\s*([\d.,]+)\s*(?:lượt\s+)?đánh\s*giá\s*\)", re.IGNORECASE
+)
+
+
+def rating_summary_from_text(text: str) -> tuple[float, int]:
+    """Extract (avg_rating, review_count) from free text like '4.9 (366 đánh giá)'."""
+    match = _RATING_SUMMARY_RE.search(text or "")
+    if not match:
+        return 0.0, 0
+    rating = float(match.group(1).replace(",", "."))
+    try:
+        count = int(match.group(2).replace(".", "").replace(",", ""))
+    except ValueError:
+        count = 0
+    return (rating, count) if rating <= 5 else (0.0, 0)
+
+
+# '"special_price": 30990000' — price keys inside inline JS state (e.g. Nuxt).
+_INLINE_PRICE_RE = re.compile(
+    r'"(?:special_price|final_price|price)"\s*:\s*"?(\d{5,10})(?:\.\d+)?"?'
+)
+
+
+def price_from_inline_json(html: str) -> int:
+    """Best-effort price from inline JSON/JS state embedded in the page."""
+    match = _INLINE_PRICE_RE.search(html or "")
+    return int(match.group(1)) if match else 0
+
+
+def json_ld_reviews(product_ld: dict) -> list[dict]:
+    """Normalize JSON-LD ``review`` entries to {author, rating, content} dicts."""
+    raw = product_ld.get("review")
+    entries = raw if isinstance(raw, list) else [raw]
+    reviews: list[dict] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        author = entry.get("author")
+        if isinstance(author, dict):
+            author = author.get("name", "")
+        rating_obj = entry.get("reviewRating")
+        rating = 0.0
+        if isinstance(rating_obj, dict):
+            rating = parse_rating(str(rating_obj.get("ratingValue", "")))
+        content = entry.get("reviewBody") or entry.get("description") or ""
+        if content:
+            reviews.append(
+                {
+                    "author": clean_ws(str(author or "")),
+                    "rating": rating,
+                    "content": clean_ws(str(content)),
+                }
+            )
+    return reviews
+
+
 # -- Review helpers ----------------------------------------------------------
 
 

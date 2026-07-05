@@ -90,6 +90,21 @@ class BaseSpider(ABC):
         """Return reviews parsed from the review-endpoint response. Override."""
         return []
 
+    def fetch_endpoint_reviews(
+        self, product: CrawledProduct, detail_html: str
+    ) -> list[Review]:
+        """Fetch reviews from the source's review endpoint.
+
+        Default: GET `build_reviews_url(product)` and parse the body. Override
+        for sources whose endpoint needs a POST body or page-derived params
+        (`detail_html` is provided for extracting those).
+        """
+        endpoint = self.build_reviews_url(product)
+        if not endpoint:
+            return []
+        body = self.client.get(endpoint)
+        return self.parse_reviews_payload(body, endpoint)
+
     # -- Review collection (shared) ------------------------------------------
 
     def collect_reviews(self, product: CrawledProduct, detail_html: str) -> list[Review]:
@@ -104,13 +119,13 @@ class BaseSpider(ABC):
 
         reviews: list[Review] = list(self.parse_reviews(detail_html, product.source_url))
 
-        endpoint = self.build_reviews_url(product)
-        if endpoint and len(reviews) < config.max_reviews:
+        if len(reviews) < config.max_reviews:
             try:
-                body = self.client.get(endpoint)
-                reviews.extend(self.parse_reviews_payload(body, endpoint))
+                reviews.extend(self.fetch_endpoint_reviews(product, detail_html))
             except CrawlerError as exc:
-                self.logger.warning("reviews fetch failed for %s: %s", endpoint, exc)
+                self.logger.warning(
+                    "reviews fetch failed for %s: %s", product.source_url, exc
+                )
 
         # Deduplicate (by author + content) while preserving order, then cap.
         seen: set[tuple[str, str]] = set()

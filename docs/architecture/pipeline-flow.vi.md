@@ -54,12 +54,16 @@ flowchart LR
         EMB --> Vec[Query Vector]
         Filters --> VS[VectorStore.query]
         Vec --> VS
-        VS --> Candidates["top_k × 3 candidates"]
+        Q --> BM["BM25Index\n(keyword)"]
+        Filters --> BM
+        VS --> RRF["RRF fusion\n(HybridSearch)"]
+        BM --> RRF
+        RRF --> Candidates["top_k × 3 candidates"]
     end
 
     subgraph Score["3. Chấm điểm & Xếp hạng"]
-        Candidates --> SS[SimilarityScorer]
-        SS --> PS[ProductScorer]
+        Candidates --> CE["CrossEncoderReranker\n(optional)"]
+        CE --> PS[ProductScorer]
         PS --> Ranked["Đã chấm điểm + sắp xếp"]
         Ranked --> TopK["Top K sản phẩm"]
     end
@@ -94,7 +98,9 @@ Hai việc diễn ra song song:
 
 `ProductRetriever` sau đó truy vấn Postgres (pgvector) với cả vector lẫn các filter đã dịch thành điều kiện SQL — so sánh bằng cho thương hiệu/danh mục, khoảng số cho giá/rating (ví dụ `(metadata->>'price')::numeric <= 15000000`) — lấy về `top_k × 3` ứng viên (lấy dư để bước chấm điểm thu hẹp lại). Sản phẩm vượt ngân sách bị loại ngay tại đây, trước khi chấm điểm và đưa vào prompt.
 
-**Nguồn:** `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`
+Khi bật `use_bm25` (mặc định), kết quả semantic được hợp nhất với bảng xếp hạng keyword **BM25** in-memory qua **Reciprocal Rank Fusion** (`HybridSearch`), nhờ đó các khớp chính xác theo từ (mã model, thông số) được đẩy hạng. Cùng bộ filter được áp lại cho các hit BM25. Xem [Truy xuất lai & Reranking](hybrid-retrieval.md) để hiểu đầy đủ kỹ thuật.
+
+**Nguồn:** `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`, `src/retrieval/hybrid_search.py`, `src/retrieval/keyword_search.py`
 
 **Bước 3 — Chấm điểm & Xếp hạng**
 
@@ -104,6 +110,8 @@ Mỗi ứng viên nhận một composite score từ `ProductScorer`:
 - **Độ khớp giá** — sản phẩm phù hợp với ngân sách đến mức nào
 - **Rating** — điểm đánh giá trung bình của người dùng
 - **Độ khớp tính năng** — mức độ trùng khớp giữa ưu tiên người dùng và tính năng sản phẩm
+
+Khi bật `use_reranker`, các ứng viên sau fusion được chấm lại bằng cross-encoder (`CrossEncoderReranker`) và điểm rerank (ép qua sigmoid) thay thế điểm truy xuất làm thành phần relevance.
 
 Sản phẩm được sắp xếp giảm dần theo `final_score` và cắt còn `top_k`.
 
@@ -183,11 +191,11 @@ Bảng so sánh và mô tả sản phẩm được chèn vào prompt template. L
 
 `HybridSearch` kết hợp nhiều chiến lược truy xuất:
 
-- **Semantic search** — độ tương đồng vector qua Postgres + pgvector (hiện đang hoạt động)
-- **Keyword search** — BM25 cho khớp từ khóa chính xác (dự kiến triển khai)
-- **Metadata filter** — ràng buộc giá, thương hiệu, danh mục
+- **Semantic search** — độ tương đồng vector qua Postgres + pgvector
+- **Keyword search** — BM25 (Okapi) index in-memory, build lúc khởi động từ cùng corpus
+- **Metadata filter** — ràng buộc giá, thương hiệu, danh mục, áp trên cả hai nhánh
 
-Kết quả từ tất cả chiến lược được gộp lại và loại trùng.
+Kết quả từ hai nhánh được hợp nhất bằng **Reciprocal Rank Fusion** (`rrf_k = 60`). Chi tiết đầy đủ: [Truy xuất lai & Reranking](hybrid-retrieval.md).
 
 **Nguồn:** `src/retrieval/hybrid_search.py`
 
@@ -201,6 +209,8 @@ flowchart LR
     CE --> S["Điểm rerank"]
     S --> R["Top K sau rerank"]
 ```
+
+Bật qua `use_reranker: true` trong `configs/settings.yaml` (cần `uv add sentence-transformers`); nối vào recommend engine bởi `get_reranker()` trong `api/deps.py`. Logit rerank được ép qua sigmoid trước khi vào `ProductScorer`.
 
 **Nguồn:** `src/retrieval/reranker.py`
 
@@ -236,6 +246,8 @@ get_config() → PipelineConfig
 get_embedder() → ProductEmbedder
 get_vector_store() → VectorStore
 get_retriever() → ProductRetriever
+get_searcher() → HybridSearch | ProductRetriever   # BM25 + RRF khi use_bm25
+get_reranker() → CrossEncoderReranker | None       # khi use_reranker
 get_llm_client() → LLMClient
 get_recommend_pipeline() → RecommendPipeline
 get_compare_pipeline() → ComparePipeline

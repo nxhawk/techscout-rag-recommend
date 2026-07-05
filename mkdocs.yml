@@ -78,6 +78,7 @@ plugins:
             Data Flow: Luồng dữ liệu
             Pipeline: Pipeline
             Pipeline Flow: Luồng xử lý
+            Hybrid Retrieval: Truy xuất lai
             Project Structure: Cấu trúc dự án
             API Reference: Tài liệu API
             Endpoints: Endpoints
@@ -90,6 +91,7 @@ plugins:
             Crawler: Crawler
             Ingestion: Nạp dữ liệu
             Testing: Kiểm thử
+            Scripts: Scripts
 
 nav:
   - Home: index.md
@@ -103,7 +105,13 @@ nav:
       - Data Flow: architecture/data-flow.md
       - Pipeline: architecture/pipeline.md
       - Pipeline Flow: architecture/pipeline-flow.md
+      - Hybrid Retrieval: architecture/hybrid-retrieval.md
       - Project Structure: architecture/structure.md
+  - Scripts:
+      - Overview: scripts/index.md
+      - crawl.py: scripts/crawl.md
+      - ingest.py: scripts/ingest.md
+      - seed.py: scripts/seed.md
   - API Reference:
       - Endpoints: api/endpoints.md
       - Schemas: api/schemas.md

@@ -139,7 +139,10 @@ sources:
     categories:
       smartphone: "/mobile.html?p={page}"
       laptop: "/laptop.html?p={page}"
-    # reviews_url: "https://.../api/reviews?slug={slug}&page={page}"      # tùy chọn
+    # API GraphQL bình luận (đã xác minh qua network capture). Spider POST một
+    # query COMMENTS với parent product id lấy từ HTML trang chi tiết.
+    reviews_url: "https://api.cellphones.com.vn/graphql-customer/graphql/query"
+    reviews_query_type: "product"       # "product" = feed bình luận/hỏi đáp
 ```
 
 ### Các trường của `CrawlerConfig`
@@ -168,7 +171,8 @@ sources:
 | `categories` | `dict[str, str]` | `{}` | Slug danh mục → template đường dẫn listing kèm `{page}`. |
 | `max_pages` | `int` | `3` | Số trang listing duyệt qua mỗi danh mục. |
 | `max_products` | `int \| None` | `None` | Giới hạn số trang chi tiết mỗi lần chạy (`None` = không giới hạn). |
-| `reviews_url` | `str \| None` | `None` | Template endpoint review (`{product_id}`, `{slug}`, `{page}`). Rỗng = chỉ lấy review inline. |
+| `reviews_url` | `str \| None` | `None` | Endpoint review. Với nguồn dùng GET đây là URL template (`{product_id}`, `{slug}`, `{page}`); với nguồn GraphQL (cellphones) đây là URL endpoint thuần và spider tự dựng POST payload. Rỗng = chỉ lấy review inline. |
+| `reviews_query_type` | `str` | `"product"` | Chỉ dùng cho CellphoneS: tham số `type` của query GraphQL bình luận. `"product"` trả về feed bình luận/hỏi đáp. |
 
 ### Cách cấu hình được nạp
 
@@ -387,6 +391,29 @@ vào `general`, nên `specifications` không bao giờ rỗng.
 | `connectivity` | Kết nối & Tiện ích. |
 | `general` | Bất cứ thứ gì không khớp ở trên. |
 
+### CellphoneS: trích xuất trường theo tầng
+
+CellphoneS là ứng dụng Nuxt với tên class CSS thay đổi thường xuyên, nên
+spider của nó **không** phụ thuộc vào selector cho các trường cốt lõi.
+`parse_detail` resolve `price`, `avg_rating`, `review_count`, `description`
+và `image_url` qua các tầng fallback, đáng tin cậy nhất trước:
+
+| Ưu tiên | Nguồn | Cung cấp |
+| --- | --- | --- |
+| 1 | Block JSON-LD Product (`<script type="application/ld+json">`) | giá (`offers`), rating + số đánh giá (`aggregateRating`), mô tả, ảnh |
+| 2 | Thẻ `<meta>` (`product:price:amount`, `og:description`, `og:image`) | giá, mô tả, ảnh |
+| 3 | Selector CSS liên quan đến giá (`[class*='sale-price']`, ...) | giá |
+| 4 | Regex trên JS state inline (`"special_price": ...` trong payload Nuxt) | giá |
+| 5 | Mẫu text render phía server — `"4.9 (366 đánh giá)"` cạnh `<h1>`, số tiền VND đầu tiên (`30.990.000đ`) trong body | rating, số đánh giá, giá |
+
+Block JSON-LD có mặt trong HTML server thực tế (đã xác minh tháng 7/2026),
+nên tầng 1 thường trả lời được tất cả; các tầng dưới chỉ cần đến nếu trang
+bỏ structured data. Ảnh placeholder lazy-load (`placehoder.png`, thumbnail
+YouTube) bị bỏ qua, ưu tiên URL từ JSON-LD/`og:image`. Các helper dùng chung
+nằm trong `parser.py` (`find_product_json_ld`, `json_ld_price`,
+`json_ld_rating`, `meta_content`, `rating_summary_from_text`,
+`price_from_inline_json`) và có thể tái sử dụng cho spider khác.
+
 ### Đánh giá (Reviews)
 
 Đánh giá của người mua thường nằm sau một endpoint AJAX/JSON riêng thay vì
@@ -397,27 +424,73 @@ trong HTML của trang chi tiết, nên việc thu thập review chạy qua hai 
 flowchart TD
     A[parse_detail -> CrawledProduct] --> B{fetch_reviews?}
     B -->|không| Z[reviews = rỗng]
-    B -->|có| C[parse_reviews: HTML inline trên trang chi tiết]
-    C --> D{reviews_url có được đặt và dưới max_reviews?}
+    B -->|có| C[parse_reviews: HTML inline / JSON-LD trên trang chi tiết]
+    C --> D{dưới max_reviews?}
     D -->|không| E[loại trùng + giới hạn max_reviews]
-    D -->|có| F[client.get endpoint reviews]
+    D -->|có| F[fetch_endpoint_reviews: GET template hoặc POST GraphQL]
     F --> G[parse_reviews_payload: JSON hoặc HTML]
     G --> E
     E --> H[product.reviews]
 ```
 
-Mỗi `Review` lưu `author`, `rating` và `content`. URL endpoint được cấu hình
-theo từng nguồn qua `reviews_url` (với placeholder `{product_id}`, `{slug}`,
-`{page}`); `parse_reviews_payload` tìm mảng review bên trong JSON bất kể độ
-lồng nhau và fallback về parse HTML nếu response không phải JSON. Lỗi
-endpoint được log và bỏ qua — review là best-effort và không bao giờ hủy một
-lần chạy.
+Mỗi `Review` lưu `author`, `rating` và `content`. Lời gọi endpoint đi qua
+hook `fetch_endpoint_reviews(product, detail_html)` trên `BaseSpider`:
+
+- **Mặc định (GET template)** — dùng cho `tgdd`: `build_reviews_url` điền
+  template `reviews_url` (placeholder `{product_id}`, `{slug}`, `{page}`) và
+  body được fetch bằng `client.get`. `parse_reviews_payload` tìm mảng review
+  bên trong JSON bất kể độ lồng nhau và fallback về parse HTML.
+- **Override (POST GraphQL)** — dùng cho `cellphones`: spider dựng GraphQL
+  payload và gửi bằng `HttpClient.post_json`, áp dụng cùng các quy tắc lịch
+  sự như `get` (robots, rate limit, retry). Xem mục tiếp theo.
+
+Lỗi endpoint được log và bỏ qua — review là best-effort và không bao giờ hủy
+một lần chạy.
 
 > Endpoint review và định dạng JSON của nó khác nhau tùy trang và thay đổi
-> theo thời gian. `reviews_url` mặc định được comment trong
+> theo thời gian. Với `tgdd`, `reviews_url` mặc định được comment trong
 > `configs/crawler.yaml`; hãy xác minh endpoint thực tế trên trang web trước
-> khi bật nó. Khi không đặt, chỉ những review nhúng sẵn trong HTML trang chi
-> tiết mới được thu thập.
+> khi bật nó. Với `cellphones`, endpoint đã được xác minh qua network capture
+> (tháng 7/2026) và được bật mặc định.
+
+#### CellphoneS: API GraphQL bình luận
+
+CellphoneS render đánh giá của người mua phía client, nên HTML tĩnh mà
+crawler fetch không bao giờ chứa chúng. Thay vào đó spider gọi thẳng API bình
+luận của trang, được phát hiện bằng cách capture network traffic của trang
+(`scripts/discover_reviews_api.py`, tiện ích dev dùng Playwright):
+
+```
+POST https://api.cellphones.com.vn/graphql-customer/graphql/query
+
+query COMMENTS {
+  comment(type: "product", pageUrl: "<URL trang chi tiết>",
+          productId: <parent id>, currentPage: 1) {
+    total
+    matches { id content is_shown is_admin created_at customer { fullname } }
+  }
+}
+```
+
+Chi tiết luồng:
+
+1. **Parent product id** — query yêu cầu product id cấp trang (id cha), không
+   phải id biến thể màu/dung lượng. HTML tĩnh của trang chi tiết chứa nó tại
+   `<div id="block-comment-cps" product-id="59258">`; pattern neo theo
+   `block-comment-cps` được thử trước pattern `product-id` chung để id biến
+   thể ở nơi khác trong trang không che mất nó. Nếu không tìm thấy id, lời
+   gọi endpoint bị bỏ qua kèm warning.
+2. **Query type** — tham số `type` lấy từ `reviews_query_type` trong
+   `configs/crawler.yaml`. `"product"` trả về feed bình luận/hỏi đáp (câu hỏi
+   về hàng, trả góp lẫn với nhận xét). Feed đánh giá sao ("Đánh giá & nhận
+   xét") nhiều khả năng dùng một giá trị type khác —
+   `scripts/probe_comment_api.py` thăm dò các ứng viên (`rating`, `review`,
+   ...); nếu xác nhận được, việc chuyển đổi chỉ là thay một dòng config.
+3. **Lọc** — reply của nhân viên (`is_admin`) và entry bị ẩn (`is_shown: 0`)
+   bị loại; chỉ nội dung do khách hàng viết trở thành `Review`.
+
+> JSON-LD của trang cũng liệt kê vài review SEO, nhưng chúng chỉ có số sao và
+> tác giả (không có nội dung), nên chỉ được thu thập khi có text.
 
 #### Trích xuất nội dung & rating bền vững (inline)
 
@@ -536,6 +609,9 @@ tên trường với `data/raw/products/`, nên có thể đưa thẳng vào
    Tùy chọn override các hook review:
    - `parse_reviews(html, url)` — review nhúng trong HTML trang chi tiết.
    - `parse_reviews_payload(body, url)` — review từ endpoint `reviews_url`.
+   - `fetch_endpoint_reviews(product, detail_html)` — toàn bộ bước fetch
+     endpoint, dành cho API POST/GraphQL hoặc endpoint cần tham số lấy từ
+     trang (xem spider CellphoneS làm ví dụ hoàn chỉnh).
 3. Đăng ký class trong `SPIDER_REGISTRY` tại `src/crawler/spiders/__init__.py`.
 
 Base class xử lý phân trang, fetch chi tiết song song, thu thập review, loại
@@ -569,5 +645,12 @@ uv run python scripts/crawl.py --all
 Unit test của crawler chạy offline (không cần mạng) với fixture HTML inline:
 
 ```bash
-uv run pytest tests/test_crawler.py
+uv run pytest tests/test_crawler.py            # test dùng chung + tgdd
+uv run pytest tests/test_cellphones_spider.py  # trích xuất trường của cellphones
+uv run pytest tests/test_cellphones_reviews.py # API GraphQL bình luận cellphones
 ```
+
+Hai tiện ích dev hỗ trợ làm việc với endpoint trên trang thật (không thuộc CI):
+`scripts/discover_reviews_api.py` (capture network các API liên quan review
+bằng Playwright) và `scripts/probe_comment_api.py` (thăm dò các biến thể
+`type` của query bình luận và lưu response).

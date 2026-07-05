@@ -54,12 +54,16 @@ flowchart LR
         EMB --> Vec[Query Vector]
         Filters --> VS[VectorStore.query]
         Vec --> VS
-        VS --> Candidates["top_k × 3 candidates"]
+        Q --> BM["BM25Index\n(keyword)"]
+        Filters --> BM
+        VS --> RRF["RRF fusion\n(HybridSearch)"]
+        BM --> RRF
+        RRF --> Candidates["top_k × 3 candidates"]
     end
 
     subgraph Score["3. Score & Rank"]
-        Candidates --> SS[SimilarityScorer]
-        SS --> PS[ProductScorer]
+        Candidates --> CE["CrossEncoderReranker\n(optional)"]
+        CE --> PS[ProductScorer]
         PS --> Ranked["Scored + sorted"]
         Ranked --> TopK["Top K products"]
     end
@@ -94,7 +98,9 @@ Two things happen in parallel:
 
 The `ProductRetriever` then queries Postgres (pgvector) with both the vector and the filters translated into SQL conditions — equality for brand/category, numeric ranges for price/rating (e.g. `(metadata->>'price')::numeric <= 15000000`) — retrieving `top_k × 3` candidates (over-fetching for the scoring step to narrow down). Over-budget products are excluded here, before scoring and prompting.
 
-**Source:** `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`
+With `use_bm25` enabled (default), the semantic results are then fused with an in-memory **BM25** keyword ranking via **Reciprocal Rank Fusion** (`HybridSearch`), so exact-term matches (model numbers, spec tokens) get boosted. The same filters are re-applied to the BM25 hits. See [Hybrid Retrieval & Reranking](hybrid-retrieval.md) for the full technique.
+
+**Source:** `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`, `src/retrieval/hybrid_search.py`, `src/retrieval/keyword_search.py`
 
 **Step 3 — Score & Rank**
 
@@ -104,6 +110,8 @@ Each candidate gets a composite score from `ProductScorer`:
 - **Price match** — how well the product fits the budget
 - **Rating** — average user rating
 - **Feature match** — overlap between user priorities and product features
+
+With `use_reranker` enabled, the fused candidates are first re-scored by the cross-encoder (`CrossEncoderReranker`) and the sigmoid-squashed rerank score replaces the retrieval score as the relevance component.
 
 Products are sorted by `final_score` descending and truncated to `top_k`.
 
@@ -183,11 +191,11 @@ The comparison table and product descriptions are injected into a prompt templat
 
 `HybridSearch` combines multiple retrieval strategies:
 
-- **Semantic search** — vector similarity via Postgres + pgvector (currently active)
-- **Keyword search** — BM25 for exact term matches (planned)
-- **Metadata filter** — price, brand, category constraints
+- **Semantic search** — vector similarity via Postgres + pgvector
+- **Keyword search** — in-memory BM25 (Okapi) index built at startup from the same corpus
+- **Metadata filter** — price, brand, category constraints, enforced on both branches
 
-Results from all strategies are merged and deduplicated.
+Results from the two branches are fused with **Reciprocal Rank Fusion** (`rrf_k = 60`). Full details: [Hybrid Retrieval & Reranking](hybrid-retrieval.md).
 
 **Source:** `src/retrieval/hybrid_search.py`
 
@@ -201,6 +209,8 @@ flowchart LR
     CE --> S["Rerank scores"]
     S --> R["Top K reranked"]
 ```
+
+Enabled via `use_reranker: true` in `configs/settings.yaml` (requires `uv add sentence-transformers`); wired into the recommend engine by `get_reranker()` in `api/deps.py`. Rerank logits are sigmoid-squashed before entering `ProductScorer`.
 
 **Source:** `src/retrieval/reranker.py`
 
@@ -236,6 +246,8 @@ get_config() → PipelineConfig
 get_embedder() → ProductEmbedder
 get_vector_store() → VectorStore
 get_retriever() → ProductRetriever
+get_searcher() → HybridSearch | ProductRetriever   # BM25 + RRF when use_bm25
+get_reranker() → CrossEncoderReranker | None       # when use_reranker
 get_llm_client() → LLMClient
 get_recommend_pipeline() → RecommendPipeline
 get_compare_pipeline() → ComparePipeline

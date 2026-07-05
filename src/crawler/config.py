@@ -21,7 +21,12 @@ class SourceConfig:
     max_products: int | None = None
     # Optional review endpoint template, may contain `{product_id}`, `{slug}`
     # and `{page}` placeholders. Leave empty to only parse inline reviews.
+    # For GraphQL sources (e.g. cellphones) this is the plain endpoint URL and
+    # the spider builds the POST payload itself.
     reviews_url: str | None = None
+    # GraphQL comment query `type` argument (cellphones): "product" returns the
+    # Q&A/comment feed; other values (e.g. "rating") may return starred reviews.
+    reviews_query_type: str = "product"
 
 
 @dataclass

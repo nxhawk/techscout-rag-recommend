@@ -73,6 +73,33 @@ class HttpClient:
         except httpx.HTTPError as exc:
             raise FetchError(url, message=str(exc)) from exc
 
+    def post_json(self, url: str, payload: dict) -> str:
+        """Synchronously POST a JSON payload (e.g. a GraphQL query) to a URL.
+
+        Applies the same politeness rules as `get` (robots, rate limit, retry).
+        """
+        self._check_robots(url)
+        self._rate_limiter.wait()
+
+        @retry(
+            reraise=True,
+            stop=stop_after_attempt(self.config.max_retries),
+            wait=wait_exponential(multiplier=self.config.retry_backoff),
+            retry=retry_if_exception_type(_RETRYABLE),
+        )
+        def _do() -> str:
+            resp = self._sync_client.post(url, json=payload)
+            resp.raise_for_status()
+            return resp.text
+
+        try:
+            logger.debug("POST %s", url)
+            return _do()
+        except httpx.HTTPStatusError as exc:
+            raise FetchError(url, exc.response.status_code, str(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise FetchError(url, message=str(exc)) from exc
+
     async def aget(self, url: str, client: httpx.AsyncClient) -> str:
         """Asynchronously fetch a URL using a shared AsyncClient."""
         self._check_robots(url)

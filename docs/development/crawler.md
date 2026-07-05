@@ -138,7 +138,10 @@ sources:
     categories:
       smartphone: "/mobile.html?p={page}"
       laptop: "/laptop.html?p={page}"
-    # reviews_url: "https://.../api/reviews?slug={slug}&page={page}"      # optional
+    # Comment GraphQL API (verified via network capture). The spider POSTs a
+    # COMMENTS query with the parent product id taken from the detail HTML.
+    reviews_url: "https://api.cellphones.com.vn/graphql-customer/graphql/query"
+    reviews_query_type: "product"       # "product" = Q&A/comment feed
 ```
 
 ### `CrawlerConfig` fields
@@ -167,7 +170,8 @@ sources:
 | `categories` | `dict[str, str]` | `{}` | Category slug → listing path template with `{page}`. |
 | `max_pages` | `int` | `3` | Listing pages walked per category. |
 | `max_products` | `int \| None` | `None` | Cap on detail pages per run (`None` = unlimited). |
-| `reviews_url` | `str \| None` | `None` | Review endpoint template (`{product_id}`, `{slug}`, `{page}`). Empty = inline reviews only. |
+| `reviews_url` | `str \| None` | `None` | Review endpoint. For GET sources it is a URL template (`{product_id}`, `{slug}`, `{page}`); for GraphQL sources (cellphones) it is the plain endpoint URL and the spider builds the POST payload itself. Empty = inline reviews only. |
+| `reviews_query_type` | `str` | `"product"` | CellphoneS only: the `type` argument of the comment GraphQL query. `"product"` returns the Q&A/comment feed. |
 
 ### How the config is loaded
 
@@ -378,6 +382,29 @@ are found, all rows fall under `general`, so `specifications` is never empty.
 | `connectivity` | Kết nối & Tiện ích. |
 | `general` | Anything not matched above. |
 
+### CellphoneS: layered field extraction
+
+CellphoneS is a Nuxt app whose CSS class names churn often, so its spider does
+**not** rely on selectors for the core fields. `parse_detail` resolves `price`,
+`avg_rating`, `review_count`, `description` and `image_url` through layered
+fallbacks, most reliable first:
+
+| Priority | Source | Provides |
+| --- | --- | --- |
+| 1 | JSON-LD Product block (`<script type="application/ld+json">`) | price (`offers`), rating + review count (`aggregateRating`), description, image |
+| 2 | `<meta>` tags (`product:price:amount`, `og:description`, `og:image`) | price, description, image |
+| 3 | Price-ish CSS selectors (`[class*='sale-price']`, ...) | price |
+| 4 | Inline JS state regex (`"special_price": ...` in Nuxt payload) | price |
+| 5 | Server-rendered text patterns — `"4.9 (366 đánh giá)"` next to the `<h1>`, first VND amount (`30.990.000đ`) in the body | rating, review count, price |
+
+The JSON-LD block is present in the live server HTML (verified July 2026), so
+layer 1 normally answers everything; the lower layers only matter if the site
+drops its structured data. Lazy-load placeholder images (`placehoder.png`,
+YouTube thumbnails) are skipped in favor of JSON-LD/`og:image` URLs. The shared
+helpers live in `parser.py` (`find_product_json_ld`, `json_ld_price`,
+`json_ld_rating`, `meta_content`, `rating_summary_from_text`,
+`price_from_inline_json`) and are reusable by other spiders.
+
 ### Reviews
 
 Buyer reviews often live behind a separate AJAX/JSON endpoint rather than in the
@@ -387,26 +414,73 @@ detail-page HTML, so review collection runs in two stages:
 flowchart TD
     A[parse_detail -> CrawledProduct] --> B{fetch_reviews?}
     B -->|no| Z[reviews = empty]
-    B -->|yes| C[parse_reviews: inline HTML on detail page]
-    C --> D{reviews_url set and under max_reviews?}
+    B -->|yes| C[parse_reviews: inline HTML / JSON-LD on detail page]
+    C --> D{under max_reviews?}
     D -->|no| E[dedup + cap max_reviews]
-    D -->|yes| F[client.get reviews endpoint]
+    D -->|yes| F[fetch_endpoint_reviews: GET template or POST GraphQL]
     F --> G[parse_reviews_payload: JSON or HTML]
     G --> E
     E --> H[product.reviews]
 ```
 
-Each `Review` stores `author`, `rating` and `content`. The endpoint URL is
-configured per source via `reviews_url` (with `{product_id}`, `{slug}`, `{page}`
-placeholders); `parse_reviews_payload` locates the review array inside the JSON
-regardless of nesting and falls back to HTML parsing if the response is not JSON.
+Each `Review` stores `author`, `rating` and `content`. The endpoint call goes
+through the `fetch_endpoint_reviews(product, detail_html)` hook on `BaseSpider`:
+
+- **Default (GET template)** — used by `tgdd`: `build_reviews_url` fills the
+  `reviews_url` template (`{product_id}`, `{slug}`, `{page}` placeholders) and the
+  body is fetched with `client.get`. `parse_reviews_payload` locates the review
+  array inside the JSON regardless of nesting and falls back to HTML parsing.
+- **Override (POST GraphQL)** — used by `cellphones`: the spider builds a GraphQL
+  payload and sends it with `HttpClient.post_json`, which applies the same
+  politeness rules as `get` (robots, rate limit, retry). See the next section.
+
 Endpoint failures are logged and skipped — reviews are best-effort and never abort
 a run.
 
 > The review endpoint and its JSON shape differ per site and change over time.
-> `reviews_url` is left commented out in `configs/crawler.yaml` by default; verify
-> the real endpoint against the live site before enabling it. With it unset, only
-> reviews embedded in the detail-page HTML are collected.
+> For `tgdd`, `reviews_url` is left commented out in `configs/crawler.yaml`;
+> verify the real endpoint against the live site before enabling it. For
+> `cellphones`, the endpoint was verified via network capture (July 2026) and is
+> enabled by default.
+
+#### CellphoneS: comment GraphQL API
+
+CellphoneS renders buyer reviews client-side, so the static HTML the crawler
+fetches never contains them. The spider instead calls the site's own comment
+API, discovered by capturing the page's network traffic
+(`scripts/discover_reviews_api.py`, a Playwright-based dev utility):
+
+```
+POST https://api.cellphones.com.vn/graphql-customer/graphql/query
+
+query COMMENTS {
+  comment(type: "product", pageUrl: "<detail page URL>",
+          productId: <parent id>, currentPage: 1) {
+    total
+    matches { id content is_shown is_admin created_at customer { fullname } }
+  }
+}
+```
+
+Flow details:
+
+1. **Parent product id** — the query requires the page-level (parent) product id,
+   not the color/storage variant id. The static detail HTML exposes it as
+   `<div id="block-comment-cps" product-id="59258">`; the anchored pattern is
+   tried before the generic `product-id` attribute so variant ids elsewhere in
+   the page cannot shadow it. If no id is found, the endpoint call is skipped
+   with a warning.
+2. **Query type** — the `type` argument comes from `reviews_query_type` in
+   `configs/crawler.yaml`. `"product"` returns the Q&A/comment feed (questions
+   about stock and installments mixed with feedback). The starred-rating feed
+   ("Đánh giá & nhận xét") likely uses another type value —
+   `scripts/probe_comment_api.py` probes candidates (`rating`, `review`, ...);
+   if one is confirmed, switching is a one-line config change.
+3. **Filtering** — staff replies (`is_admin`) and hidden entries (`is_shown: 0`)
+   are dropped; only customer-authored content becomes a `Review`.
+
+> The page's JSON-LD also lists a few SEO reviews, but they carry only a star
+> rating and author (no body), so they are collected only when they have text.
 
 #### Robust content & rating extraction (inline)
 
@@ -523,6 +597,9 @@ field names as `data/raw/products/`, so it can be fed directly to
    Optionally override the review hooks:
    - `parse_reviews(html, url)` — reviews embedded in the detail-page HTML.
    - `parse_reviews_payload(body, url)` — reviews from the `reviews_url` endpoint.
+   - `fetch_endpoint_reviews(product, detail_html)` — full endpoint fetch, for
+     POST/GraphQL APIs or endpoints needing page-derived parameters (see the
+     CellphoneS spider for a worked example).
 3. Register the class in `SPIDER_REGISTRY` in `src/crawler/spiders/__init__.py`.
 
 The base class handles pagination, concurrent detail fetching, review collection,
@@ -556,5 +633,12 @@ uv run python scripts/crawl.py --all
 Crawler unit tests run offline (no network) against inline HTML fixtures:
 
 ```bash
-uv run pytest tests/test_crawler.py
+uv run pytest tests/test_crawler.py            # shared crawler + tgdd tests
+uv run pytest tests/test_cellphones_spider.py  # cellphones field extraction
+uv run pytest tests/test_cellphones_reviews.py # cellphones comment GraphQL API
 ```
+
+Two dev utilities support endpoint work against the live site (not part of CI):
+`scripts/discover_reviews_api.py` (Playwright network capture of review-related
+API calls) and `scripts/probe_comment_api.py` (probes comment-query `type`
+variants and dumps the responses).

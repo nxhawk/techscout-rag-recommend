@@ -10,6 +10,8 @@ from src.embedding.product_embedder import ProductEmbedder
 from src.embedding.vector_store import VectorStore
 from src.retrieval.product_retriever import ProductRetriever
 from src.retrieval.filter_engine import FilterEngine
+from src.retrieval.hybrid_search import HybridSearch
+from src.retrieval.reranker import CrossEncoderReranker
 from src.retrieval.similarity_scorer import SimilarityScorer
 from src.generation.llm_client import LLMClient
 from src.pipeline.recommend.engine import RecommendEngine
@@ -91,6 +93,53 @@ def get_retriever(config: PipelineConfig | None = None) -> ProductRetriever:
     )
 
 
+def get_searcher(config: PipelineConfig | None = None) -> ProductRetriever | HybridSearch:
+    """Create the retrieval component for the recommend flow.
+
+    With ``use_bm25`` enabled, wraps the ProductRetriever in HybridSearch
+    (semantic + BM25 fused with RRF). The BM25 index is built once at startup
+    from the vector store; if that fails (e.g. empty store), the plain
+    semantic retriever is used so the API still works.
+    """
+    cfg = config or get_config()
+    retriever = get_retriever(cfg)
+    if not cfg.use_bm25:
+        return retriever
+    searcher = HybridSearch(
+        retriever,
+        rrf_k=cfg.rrf_k,
+        keyword_candidates=cfg.keyword_candidates,
+    )
+    try:
+        searcher.setup()
+    except Exception as exc:
+        logger.warning(
+            "BM25 index build failed (%s) - falling back to semantic-only retrieval",
+            exc,
+        )
+        return retriever
+    return searcher
+
+
+def get_reranker(config: PipelineConfig | None = None) -> CrossEncoderReranker | None:
+    """Create the cross-encoder reranker if enabled and installed.
+
+    Returns None when ``use_reranker`` is off or sentence-transformers is
+    missing, so the engine transparently skips the reranking step.
+    """
+    cfg = config or get_config()
+    if not cfg.use_reranker:
+        return None
+    reranker = CrossEncoderReranker(model_name=cfg.reranker_model)
+    try:
+        reranker.setup()
+    except ImportError as exc:
+        logger.warning("Reranker disabled: %s", exc)
+        return None
+    logger.info("Cross-encoder reranker ready: %s", cfg.reranker_model)
+    return reranker
+
+
 def get_llm_client(config: PipelineConfig | None = None) -> LLMClient:
     """Create and setup LLM client."""
     cfg = config or get_config()
@@ -115,8 +164,8 @@ def get_llm_client(config: PipelineConfig | None = None) -> LLMClient:
 def get_recommend_pipeline(config: PipelineConfig | None = None) -> RecommendPipeline:
     """Create the full recommendation pipeline."""
     cfg = config or get_config()
-    retriever = get_retriever(cfg)
-    engine = RecommendEngine(retriever=retriever)
+    searcher = get_searcher(cfg)
+    engine = RecommendEngine(retriever=searcher, reranker=get_reranker(cfg))
     llm = get_llm_client(cfg)
     return RecommendPipeline(recommend_engine=engine, llm_client=llm)
 
