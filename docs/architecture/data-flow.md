@@ -11,7 +11,7 @@ flowchart LR
         A["HTML pages\n(TGDD, CellphoneS)"] -->|"parse"| B["CrawledProduct\n(JSON)"]
         B -->|"data/raw/crawled/*.json"| C["cleaned + normalized\nrecords"]
         C -->|"chunk"| D["field-based chunks\n+ metadata"]
-        D -->|"embed"| E["float vectors\n(1536-dim)"]
+        D -->|"embed"| E["float vectors\n(768-dim)"]
         E -->|"upsert"| F[("Postgres + pgvector\nvectors + metadata")]
     end
 
@@ -19,7 +19,7 @@ flowchart LR
         direction TB
         Q["Vietnamese text query"] -->|"parse"| I["intent dict\n(budget, use_case,\npriorities, brand)"]
         Q -->|"extract"| J["filters dict\n(price, brand,\ncategory, rating)"]
-        Q -->|"embed"| K["query vector\n(1536-dim)"]
+        Q -->|"embed"| K["query vector\n(768-dim)"]
         K -->|"ANN search"| L["candidate list\n(top_k x 3, with distances)"]
         L -->|"score + sort"| M["ranked product list\n(top_k)"]
         M -->|"render into prompt"| N["prompt string\n(system + user)"]
@@ -37,6 +37,8 @@ flowchart LR
         W2 --> F
     end
 
+    C -->|"upsert profiles (bootstrap)"| G
+    D -->|"bulk index (bootstrap)"| ES
     F -.->|"vector + metadata\nsearch"| L
     ES -.->|"BM25 keyword\nsearch"| L
 ```
@@ -50,7 +52,7 @@ flowchart LR
 | Clean | Raw records | Normalized records (fixed encoding, deduped, currency normalized) | Python dict | — | `src/ingestion/data_cleaner.py` |
 | Parse specs | Free-text specs | Structured key-value spec map | Python dict | — | `src/ingestion/spec_parser.py` |
 | Chunk | Cleaned product | Field-based chunks (description, specs, pros/cons, reviews), each carrying `product_id`, `brand`, `category`, `price` metadata | List of chunk dicts | — | `src/ingestion/chunker.py` |
-| Embed | Chunk text | Dense vector | `list[float]`, 1536-dim (`text-embedding-3-small`) | — | `src/embedding/product_embedder.py` |
+| Embed | Chunk text | Dense vector | `list[float]`, 768-dim (`gemini-embedding-001`) | — | `src/embedding/product_embedder.py` |
 | Store | Vectors + documents + metadata | Indexed table | Postgres table with pgvector column (HNSW, cosine similarity) | Postgres (`pgdata` volume) | `src/embedding/vector_store.py` |
 
 This whole lifecycle runs via `scripts/crawl.py` then `scripts/ingest.py` — never automatically triggered by an API request. `ingest.py` also upserts the cleaned profiles into `product_catalog` (source of truth) and bulk-indexes the chunks into Elasticsearch; with `--catalog-only` it writes just the catalog and lets the CDC workers build both indexes from the Debezium snapshot.
@@ -79,7 +81,7 @@ Delivery is at-least-once (offsets committed after apply) and both appliers are 
 | Route | Query string | Query type | Enum: `RECOMMEND` / `COMPARE` / `INFO` / `HYBRID` | `src/pipeline/rag_router.py` |
 | Intent parse (recommend) | Query string | Intent | Dict: `budget`, `use_case`, `priorities`, `brand_pref` | `src/pipeline/recommend/user_intent_parser.py` |
 | Filter extraction | Query string | Metadata filters | Dict: `price_min/max`, `brand`, `category`, `min_rating` | `src/retrieval/filter_engine.py` |
-| Query embedding | Query string | Query vector | `list[float]`, 1536-dim | `src/embedding/product_embedder.py` |
+| Query embedding | Query string | Query vector | `list[float]`, 768-dim | `src/embedding/product_embedder.py` |
 | Vector search | Query vector + filters | Candidates | List of `{id, document, metadata, distance}`, size `top_k x 3` | `src/embedding/vector_store.py` |
 | Rerank (optional) | Candidates + query | Reordered candidates | Same shape, reordered by cross-encoder score | `src/retrieval/reranker.py` |
 | Scoring | Candidates + intent | Ranked products | List sorted by `final_score`, truncated to `top_k` | `src/pipeline/recommend/scoring.py`, `src/retrieval/similarity_scorer.py` |
@@ -98,7 +100,7 @@ Delivery is at-least-once (offsets committed after apply) and both appliers are 
 | `data/raw/products/` | Original sample product data | JSON/CSV | Tracked | Manually curated / `scripts/seed.py` | `src/ingestion/product_loader.py` |
 | `data/raw/crawled/` | Raw crawler output per source | JSON | Gitignored | `scripts/crawl.py` | `scripts/ingest.py` |
 | `data/processed/` | Cleaned, normalized, chunked data | JSON | Gitignored | `src/ingestion/data_cleaner.py`, `chunker.py` | `src/embedding/product_embedder.py` |
-| Postgres (`postgres` container) | Product vectors + documents + JSONB metadata (`products` table) | pgvector `vector(1536)` column + HNSW index | N/A (external service, `pgdata` volume) | `src/embedding/vector_store.py` | `src/retrieval/product_retriever.py` |
+| Postgres (`postgres` container) | Product vectors + documents + JSONB metadata (`products` table) | pgvector `vector(768)` column + HNSW index | N/A (external service, `pgdata` volume) | `src/embedding/vector_store.py` | `src/retrieval/product_retriever.py` |
 | Postgres (`postgres` container) | Source-of-truth product rows (`product_catalog` table, `REPLICA IDENTITY FULL`) | SQL columns + JSONB (specs, pros, cons, tags) | N/A (`pgdata` volume) | `src/catalog/product_repository.py` (CRUD API, ingest) | Debezium (WAL), `api/routes/products.py` |
 | Elasticsearch (`elasticsearch` container) | Keyword chunk documents (`product_chunks` index) | Text + keyword/numeric fields, BM25 | N/A (`esdata` volume) | `src/sync/indexer_worker.py`, ingest bootstrap | `src/retrieval/es_keyword_search.py` |
 | Kafka (`kafka` container) | Product change events (`ragshop.public.product_catalog`) | Debezium JSON | N/A (`kafkadata` volume) | Debezium connector | Both sync workers |

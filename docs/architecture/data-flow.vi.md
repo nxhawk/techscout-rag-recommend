@@ -11,7 +11,7 @@ flowchart LR
         A["Trang HTML\n(TGDD, CellphoneS)"] -->|"parse"| B["CrawledProduct\n(JSON)"]
         B -->|"data/raw/crawled/*.json"| C["bản ghi đã làm sạch\n+ chuẩn hóa"]
         C -->|"chunk"| D["chunk theo trường\n+ metadata"]
-        D -->|"embed"| E["vector số thực\n(1536 chiều)"]
+        D -->|"embed"| E["vector số thực\n(768 chiều)"]
         E -->|"upsert"| F[("Postgres + pgvector\nvector + metadata")]
     end
 
@@ -19,7 +19,7 @@ flowchart LR
         direction TB
         Q["Câu hỏi tiếng Việt"] -->|"parse"| I["dict intent\n(ngân sách, mục đích,\nưu tiên, thương hiệu)"]
         Q -->|"trích xuất"| J["dict bộ lọc\n(giá, thương hiệu,\ndanh mục, đánh giá)"]
-        Q -->|"embed"| K["vector câu hỏi\n(1536 chiều)"]
+        Q -->|"embed"| K["vector câu hỏi\n(768 chiều)"]
         K -->|"tìm kiếm ANN"| L["danh sách candidate\n(top_k x 3, kèm distance)"]
         L -->|"chấm điểm + sắp xếp"| M["danh sách sản phẩm\nđã xếp hạng (top_k)"]
         M -->|"đưa vào prompt"| N["chuỗi prompt\n(system + user)"]
@@ -37,6 +37,8 @@ flowchart LR
         W2 --> F
     end
 
+    C -->|"upsert profile (bootstrap)"| G
+    D -->|"bulk index (bootstrap)"| ES
     F -.->|"tìm kiếm vector\n+ metadata"| L
     ES -.->|"BM25 keyword\nsearch"| L
 ```
@@ -50,7 +52,7 @@ flowchart LR
 | Clean | Bản ghi thô | Bản ghi đã chuẩn hóa (sửa encoding, loại trùng, chuẩn hóa tiền tệ) | Python dict | — | `src/ingestion/data_cleaner.py` |
 | Parse specs | Thông số dạng văn bản tự do | Map key-value có cấu trúc | Python dict | — | `src/ingestion/spec_parser.py` |
 | Chunk | Sản phẩm đã làm sạch | Chunk theo trường (mô tả, thông số, ưu/nhược điểm, đánh giá), mỗi chunk kèm metadata `product_id`, `brand`, `category`, `price` | Danh sách dict chunk | — | `src/ingestion/chunker.py` |
-| Embed | Văn bản chunk | Vector dày đặc | `list[float]`, 1536 chiều (`text-embedding-3-small`) | — | `src/embedding/product_embedder.py` |
+| Embed | Văn bản chunk | Vector dày đặc | `list[float]`, 768 chiều (`gemini-embedding-001`) | — | `src/embedding/product_embedder.py` |
 | Store | Vector + document + metadata | Bảng đã đánh index | Bảng Postgres với cột pgvector (HNSW, cosine similarity) | Postgres (volume `pgdata`) | `src/embedding/vector_store.py` |
 
 Toàn bộ vòng đời này chạy qua `scripts/crawl.py` rồi `scripts/ingest.py` — không bao giờ tự động kích hoạt bởi một request API. `ingest.py` cũng upsert các profile đã làm sạch vào `product_catalog` (source of truth) và bulk-index chunk vào Elasticsearch; với `--catalog-only` nó chỉ ghi catalog và để CDC worker tự build cả hai index từ snapshot Debezium.
@@ -79,7 +81,7 @@ Delivery là at-least-once (commit offset sau khi áp xong) và cả hai applier
 | Route | Chuỗi query | Loại query | Enum: `RECOMMEND` / `COMPARE` / `INFO` / `HYBRID` | `src/pipeline/rag_router.py` |
 | Parse intent (recommend) | Chuỗi query | Intent | Dict: `budget`, `use_case`, `priorities`, `brand_pref` | `src/pipeline/recommend/user_intent_parser.py` |
 | Trích xuất filter | Chuỗi query | Bộ lọc metadata | Dict: `price_min/max`, `brand`, `category`, `min_rating` | `src/retrieval/filter_engine.py` |
-| Embed query | Chuỗi query | Vector query | `list[float]`, 1536 chiều | `src/embedding/product_embedder.py` |
+| Embed query | Chuỗi query | Vector query | `list[float]`, 768 chiều | `src/embedding/product_embedder.py` |
 | Tìm kiếm vector | Vector query + filter | Candidates | Danh sách `{id, document, metadata, distance}`, kích thước `top_k x 3` | `src/embedding/vector_store.py` |
 | Rerank (tùy chọn) | Candidates + query | Candidates đã sắp xếp lại | Cùng định dạng, sắp xếp lại theo điểm cross-encoder | `src/retrieval/reranker.py` |
 | Chấm điểm | Candidates + intent | Sản phẩm đã xếp hạng | Danh sách sắp theo `final_score`, cắt còn `top_k` | `src/pipeline/recommend/scoring.py`, `src/retrieval/similarity_scorer.py` |
@@ -98,7 +100,7 @@ Delivery là at-least-once (commit offset sau khi áp xong) và cả hai applier
 | `data/raw/products/` | Dữ liệu sản phẩm mẫu gốc | JSON/CSV | Tracked | Biên soạn thủ công / `scripts/seed.py` | `src/ingestion/product_loader.py` |
 | `data/raw/crawled/` | Dữ liệu thô từ crawler theo từng nguồn | JSON | Gitignored | `scripts/crawl.py` | `scripts/ingest.py` |
 | `data/processed/` | Dữ liệu đã làm sạch, chuẩn hóa, chia chunk | JSON | Gitignored | `src/ingestion/data_cleaner.py`, `chunker.py` | `src/embedding/product_embedder.py` |
-| Postgres (container `postgres`) | Vector sản phẩm + document + metadata JSONB (bảng `products`) | Cột pgvector `vector(1536)` + chỉ mục HNSW | N/A (dịch vụ ngoài, volume `pgdata`) | `src/embedding/vector_store.py` | `src/retrieval/product_retriever.py` |
+| Postgres (container `postgres`) | Vector sản phẩm + document + metadata JSONB (bảng `products`) | Cột pgvector `vector(768)` + chỉ mục HNSW | N/A (dịch vụ ngoài, volume `pgdata`) | `src/embedding/vector_store.py` | `src/retrieval/product_retriever.py` |
 | Postgres (container `postgres`) | Row sản phẩm source-of-truth (bảng `product_catalog`, `REPLICA IDENTITY FULL`) | Cột SQL + JSONB (specs, pros, cons, tags) | N/A (volume `pgdata`) | `src/catalog/product_repository.py` (API CRUD, ingest) | Debezium (WAL), `api/routes/products.py` |
 | Elasticsearch (container `elasticsearch`) | Chunk document keyword (index `product_chunks`) | Text + trường keyword/số, BM25 | N/A (volume `esdata`) | `src/sync/indexer_worker.py`, ingest bootstrap | `src/retrieval/es_keyword_search.py` |
 | Kafka (container `kafka`) | Sự kiện thay đổi sản phẩm (`ragshop.public.product_catalog`) | Debezium JSON | N/A (volume `kafkadata`) | Debezium connector | Cả hai sync worker |
