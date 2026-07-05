@@ -1,74 +1,348 @@
 [
   {
-    "id": "iphone-15-pro-max",
-    "name": "iPhone 15 Pro Max",
+    "id": "seed-iphone-15-pro-max",
+    "name": "Điện thoại iPhone 15 Pro Max 256GB",
+    "source": "seed",
+    "source_url": "https://example.com/seed/iphone-15-pro-max",
     "brand": "Apple",
     "category": "smartphone",
     "price": 29990000,
     "currency": "VND",
     "specifications": {
-      "screen_size": "6.7 inch",
-      "processor": "A17 Pro",
-      "ram": "8 GB",
-      "storage": ["256 GB", "512 GB", "1 TB"],
-      "battery": "4441 mAh",
-      "rear_camera": "48 MP + 12 MP + 12 MP",
-      "front_camera": "12 MP",
-      "os": "iOS 17"
+      "Hệ điều hành": "iOS 17",
+      "Chip xử lý (CPU)": "Apple A17 Pro 6 nhân",
+      "RAM": "8 GB",
+      "Dung lượng lưu trữ": "256 GB",
+      "Kích thước màn hình": "6.7 inch",
+      "Công nghệ màn hình": "OLED Super Retina XDR",
+      "Camera sau": "48 MP + 12 MP + 12 MP",
+      "Camera trước": "12 MP",
+      "Dung lượng pin": "4441 mAh",
+      "Hỗ trợ sạc tối đa": "20 W",
+      "Chất liệu khung": "Titan",
+      "Khối lượng": "221 g"
     },
-    "description": "Flagship cao cấp nhất của Apple với chip A17 Pro, camera 48MP và khung titanium.",
-    "pros": ["Camera xuất sắc", "Hiệu năng mạnh nhất", "Khung titanium cao cấp", "Action Button mới"],
-    "cons": ["Giá cao", "Sạc chậm hơn đối thủ Android", "Không có sạc kèm hộp"],
+    "spec_groups": {
+      "configuration_memory": {
+        "Hệ điều hành": "iOS 17",
+        "Chip xử lý (CPU)": "Apple A17 Pro 6 nhân",
+        "RAM": "8 GB",
+        "Dung lượng lưu trữ": "256 GB"
+      },
+      "camera_display": {
+        "Kích thước màn hình": "6.7 inch",
+        "Công nghệ màn hình": "OLED Super Retina XDR",
+        "Camera sau": "48 MP + 12 MP + 12 MP",
+        "Camera trước": "12 MP"
+      },
+      "battery_charging": {
+        "Dung lượng pin": "4441 mAh",
+        "Hỗ trợ sạc tối đa": "20 W"
+      },
+      "design_material": {
+        "Chất liệu khung": "Titan",
+        "Khối lượng": "221 g"
+      }
+    },
+    "description": "Flagship cao cấp nhất của Apple với chip A17 Pro, camera 48MP và khung viền titan bền nhẹ.",
+    "image_url": "https://example.com/images/iphone-15-pro-max.jpg",
     "avg_rating": 4.7,
     "review_count": 1250,
-    "tags": ["flagship", "cao cấp", "chụp ảnh", "gaming"]
+    "reviews": [
+      {
+        "author": "Minh Anh",
+        "rating": 5.0,
+        "content": "Máy đẹp, quay phim cực nét, pin dùng cả ngày thoải mái."
+      },
+      {
+        "author": "Hoàng Nam",
+        "rating": 4.0,
+        "content": "Hiệu năng mạnh nhưng giá hơi cao và sạc vẫn khá chậm."
+      }
+    ],
+    "tags": [
+      "flagship",
+      "cao cấp",
+      "chụp ảnh",
+      "gaming"
+    ],
+    "crawled_at": "2026-07-05T21:07:04.208219"
   },
   {
-    "id": "samsung-s24-ultra",
-    "name": "Samsung Galaxy S24 Ultra",
+    "id": "seed-samsung-galaxy-s24-ultra",
+    "name": "Điện thoại Samsung Galaxy S24 Ultra 256GB",
+    "source": "seed",
+    "source_url": "https://example.com/seed/samsung-galaxy-s24-ultra",
     "brand": "Samsung",
     "category": "smartphone",
     "price": 31990000,
     "currency": "VND",
     "specifications": {
-      "screen_size": "6.8 inch",
-      "processor": "Snapdragon 8 Gen 3",
-      "ram": "12 GB",
-      "storage": ["256 GB", "512 GB", "1 TB"],
-      "battery": "5000 mAh",
-      "rear_camera": "200 MP + 50 MP + 12 MP + 10 MP",
-      "front_camera": "12 MP",
-      "os": "Android 14 (One UI 6.1)"
+      "Hệ điều hành": "Android 14 (One UI 6.1)",
+      "Chip xử lý (CPU)": "Snapdragon 8 Gen 3 for Galaxy",
+      "RAM": "12 GB",
+      "Dung lượng lưu trữ": "256 GB",
+      "Kích thước màn hình": "6.8 inch",
+      "Công nghệ màn hình": "Dynamic AMOLED 2X",
+      "Camera sau": "200 MP + 50 MP + 12 MP + 10 MP",
+      "Camera trước": "12 MP",
+      "Dung lượng pin": "5000 mAh",
+      "Hỗ trợ sạc tối đa": "45 W",
+      "Chất liệu khung": "Titan",
+      "Khối lượng": "232 g"
     },
-    "description": "Flagship Android hàng đầu với S Pen, camera 200MP và tính năng Galaxy AI.",
-    "pros": ["Camera 200MP zoom 100x", "S Pen tích hợp", "Galaxy AI thông minh", "Pin 5000mAh"],
-    "cons": ["Nặng và to", "Giá rất cao", "One UI có nhiều bloatware"],
+    "spec_groups": {
+      "configuration_memory": {
+        "Hệ điều hành": "Android 14 (One UI 6.1)",
+        "Chip xử lý (CPU)": "Snapdragon 8 Gen 3 for Galaxy",
+        "RAM": "12 GB",
+        "Dung lượng lưu trữ": "256 GB"
+      },
+      "camera_display": {
+        "Kích thước màn hình": "6.8 inch",
+        "Công nghệ màn hình": "Dynamic AMOLED 2X",
+        "Camera sau": "200 MP + 50 MP + 12 MP + 10 MP",
+        "Camera trước": "12 MP"
+      },
+      "battery_charging": {
+        "Dung lượng pin": "5000 mAh",
+        "Hỗ trợ sạc tối đa": "45 W"
+      },
+      "design_material": {
+        "Chất liệu khung": "Titan",
+        "Khối lượng": "232 g"
+      }
+    },
+    "description": "Flagship Android hàng đầu với bút S Pen tích hợp, camera 200MP và bộ tính năng Galaxy AI.",
+    "image_url": "https://example.com/images/samsung-galaxy-s24-ultra.jpg",
     "avg_rating": 4.6,
     "review_count": 980,
-    "tags": ["flagship", "cao cấp", "S Pen", "AI", "zoom"]
+    "reviews": [
+      {
+        "author": "Thu Trang",
+        "rating": 5.0,
+        "content": "Camera zoom 100x quá đỉnh, S Pen tiện cho công việc."
+      },
+      {
+        "author": "Đức Long",
+        "rating": 4.0,
+        "content": "Máy to và nặng, cầm lâu hơi mỏi tay nhưng pin rất trâu."
+      }
+    ],
+    "tags": [
+      "flagship",
+      "cao cấp",
+      "S Pen",
+      "AI",
+      "zoom"
+    ],
+    "crawled_at": "2026-07-05T21:07:04.208280"
   },
   {
-    "id": "xiaomi-14",
-    "name": "Xiaomi 14",
+    "id": "seed-xiaomi-14",
+    "name": "Điện thoại Xiaomi 14 12GB 256GB",
+    "source": "seed",
+    "source_url": "https://example.com/seed/xiaomi-14",
     "brand": "Xiaomi",
     "category": "smartphone",
     "price": 13990000,
     "currency": "VND",
     "specifications": {
-      "screen_size": "6.36 inch",
-      "processor": "Snapdragon 8 Gen 3",
-      "ram": "12 GB",
-      "storage": ["256 GB", "512 GB"],
-      "battery": "4610 mAh",
-      "rear_camera": "50 MP + 50 MP + 50 MP (Leica)",
-      "front_camera": "32 MP",
-      "os": "Android 14 (HyperOS)"
+      "Hệ điều hành": "Android 14 (HyperOS)",
+      "Chip xử lý (CPU)": "Snapdragon 8 Gen 3",
+      "RAM": "12 GB",
+      "Dung lượng lưu trữ": "256 GB",
+      "Kích thước màn hình": "6.36 inch",
+      "Công nghệ màn hình": "OLED LTPO",
+      "Camera sau": "50 MP + 50 MP + 50 MP (Leica)",
+      "Camera trước": "32 MP",
+      "Dung lượng pin": "4610 mAh",
+      "Hỗ trợ sạc tối đa": "90 W",
+      "Chất liệu khung": "Nhôm",
+      "Khối lượng": "193 g"
     },
-    "description": "Flagship compact với camera Leica, chip Snapdragon 8 Gen 3 và giá cạnh tranh.",
-    "pros": ["Camera Leica chất lượng", "Giá tốt so với cấu hình", "Gọn nhẹ", "Sạc nhanh 90W"],
-    "cons": ["MIUI có quảng cáo", "Ít phụ kiện chính hãng tại VN"],
+    "spec_groups": {
+      "configuration_memory": {
+        "Hệ điều hành": "Android 14 (HyperOS)",
+        "Chip xử lý (CPU)": "Snapdragon 8 Gen 3",
+        "RAM": "12 GB",
+        "Dung lượng lưu trữ": "256 GB"
+      },
+      "camera_display": {
+        "Kích thước màn hình": "6.36 inch",
+        "Công nghệ màn hình": "OLED LTPO",
+        "Camera sau": "50 MP + 50 MP + 50 MP (Leica)",
+        "Camera trước": "32 MP"
+      },
+      "battery_charging": {
+        "Dung lượng pin": "4610 mAh",
+        "Hỗ trợ sạc tối đa": "90 W"
+      },
+      "design_material": {
+        "Chất liệu khung": "Nhôm",
+        "Khối lượng": "193 g"
+      }
+    },
+    "description": "Flagship nhỏ gọn với hệ camera Leica, chip Snapdragon 8 Gen 3 và mức giá cạnh tranh.",
+    "image_url": "https://example.com/images/xiaomi-14.jpg",
     "avg_rating": 4.5,
     "review_count": 650,
-    "tags": ["flagship", "Leica", "compact", "giá tốt"]
+    "reviews": [
+      {
+        "author": "Quốc Bảo",
+        "rating": 5.0,
+        "content": "Nhỏ gọn dễ cầm, ảnh chụp màu Leica rất đẹp, sạc siêu nhanh."
+      },
+      {
+        "author": "Lan Phương",
+        "rating": 4.0,
+        "content": "Cấu hình mạnh, giá tốt, chỉ tiếc HyperOS còn ít quảng cáo."
+      }
+    ],
+    "tags": [
+      "flagship",
+      "Leica",
+      "compact",
+      "giá tốt"
+    ],
+    "crawled_at": "2026-07-05T21:07:04.208321"
+  },
+  {
+    "id": "seed-oppo-reno11-f",
+    "name": "Điện thoại OPPO Reno11 F 5G 8GB 256GB",
+    "source": "seed",
+    "source_url": "https://example.com/seed/oppo-reno11-f",
+    "brand": "OPPO",
+    "category": "smartphone",
+    "price": 8490000,
+    "currency": "VND",
+    "specifications": {
+      "Hệ điều hành": "Android 14 (ColorOS 14)",
+      "Chip xử lý (CPU)": "MediaTek Dimensity 7050",
+      "RAM": "8 GB",
+      "Dung lượng lưu trữ": "256 GB",
+      "Kích thước màn hình": "6.7 inch",
+      "Công nghệ màn hình": "AMOLED 120Hz",
+      "Camera sau": "64 MP + 8 MP + 2 MP",
+      "Camera trước": "32 MP",
+      "Dung lượng pin": "5000 mAh",
+      "Hỗ trợ sạc tối đa": "67 W",
+      "Chất liệu khung": "Nhựa",
+      "Khối lượng": "177 g"
+    },
+    "spec_groups": {
+      "configuration_memory": {
+        "Hệ điều hành": "Android 14 (ColorOS 14)",
+        "Chip xử lý (CPU)": "MediaTek Dimensity 7050",
+        "RAM": "8 GB",
+        "Dung lượng lưu trữ": "256 GB"
+      },
+      "camera_display": {
+        "Kích thước màn hình": "6.7 inch",
+        "Công nghệ màn hình": "AMOLED 120Hz",
+        "Camera sau": "64 MP + 8 MP + 2 MP",
+        "Camera trước": "32 MP"
+      },
+      "battery_charging": {
+        "Dung lượng pin": "5000 mAh",
+        "Hỗ trợ sạc tối đa": "67 W"
+      },
+      "design_material": {
+        "Chất liệu khung": "Nhựa",
+        "Khối lượng": "177 g"
+      }
+    },
+    "description": "Điện thoại tầm trung với thiết kế mỏng nhẹ, màn hình AMOLED 120Hz và sạc nhanh SUPERVOOC 67W.",
+    "image_url": "https://example.com/images/oppo-reno11-f.jpg",
+    "avg_rating": 4.3,
+    "review_count": 420,
+    "reviews": [
+      {
+        "author": "Gia Hân",
+        "rating": 4.0,
+        "content": "Máy mỏng nhẹ, màn mượt, sạc nhanh đầy trong khoảng 45 phút."
+      },
+      {
+        "author": "Tấn Phát",
+        "rating": 4.0,
+        "content": "Tầm giá này dùng ổn, chơi game nhẹ nhàng thì mượt."
+      }
+    ],
+    "tags": [
+      "tầm trung",
+      "pin trâu",
+      "sạc nhanh",
+      "màn đẹp"
+    ],
+    "crawled_at": "2026-07-05T21:07:04.208373"
+  },
+  {
+    "id": "seed-samsung-galaxy-a15",
+    "name": "Điện thoại Samsung Galaxy A15 8GB 128GB",
+    "source": "seed",
+    "source_url": "https://example.com/seed/samsung-galaxy-a15",
+    "brand": "Samsung",
+    "category": "smartphone",
+    "price": 4690000,
+    "currency": "VND",
+    "specifications": {
+      "Hệ điều hành": "Android 14 (One UI 6)",
+      "Chip xử lý (CPU)": "MediaTek Helio G99",
+      "RAM": "8 GB",
+      "Dung lượng lưu trữ": "128 GB",
+      "Kích thước màn hình": "6.5 inch",
+      "Công nghệ màn hình": "Super AMOLED 90Hz",
+      "Camera sau": "50 MP + 5 MP + 2 MP",
+      "Camera trước": "13 MP",
+      "Dung lượng pin": "5000 mAh",
+      "Hỗ trợ sạc tối đa": "25 W",
+      "Chất liệu khung": "Nhựa",
+      "Khối lượng": "200 g"
+    },
+    "spec_groups": {
+      "configuration_memory": {
+        "Hệ điều hành": "Android 14 (One UI 6)",
+        "Chip xử lý (CPU)": "MediaTek Helio G99",
+        "RAM": "8 GB",
+        "Dung lượng lưu trữ": "128 GB"
+      },
+      "camera_display": {
+        "Kích thước màn hình": "6.5 inch",
+        "Công nghệ màn hình": "Super AMOLED 90Hz",
+        "Camera sau": "50 MP + 5 MP + 2 MP",
+        "Camera trước": "13 MP"
+      },
+      "battery_charging": {
+        "Dung lượng pin": "5000 mAh",
+        "Hỗ trợ sạc tối đa": "25 W"
+      },
+      "design_material": {
+        "Chất liệu khung": "Nhựa",
+        "Khối lượng": "200 g"
+      }
+    },
+    "description": "Điện thoại giá rẻ với màn hình Super AMOLED sắc nét, pin 5000mAh bền bỉ dùng cả ngày.",
+    "image_url": "https://example.com/images/samsung-galaxy-a15.jpg",
+    "avg_rating": 4.2,
+    "review_count": 310,
+    "reviews": [
+      {
+        "author": "Ngọc Mai",
+        "rating": 4.0,
+        "content": "Giá rẻ mà màn AMOLED đẹp, pin dùng thoải mái hơn một ngày."
+      },
+      {
+        "author": "Văn Hùng",
+        "rating": 4.0,
+        "content": "Hợp làm máy phụ, nghe gọi lướt web ổn định."
+      }
+    ],
+    "tags": [
+      "giá rẻ",
+      "phổ thông",
+      "pin trâu",
+      "màn AMOLED"
+    ],
+    "crawled_at": "2026-07-05T21:07:04.208393"
   }
 ]

@@ -76,6 +76,7 @@ plugins:
             Overview: Tổng quan
             C4 Model: Mô hình C4
             Data Flow: Luồng dữ liệu
+            Write Path: Luồng ghi dữ liệu
             Pipeline: Pipeline
             Pipeline Flow: Luồng xử lý
             Hybrid Retrieval: Truy xuất lai
@@ -103,6 +104,7 @@ nav:
       - Overview: architecture/overview.md
       - C4 Model: architecture/c4-model.md
       - Data Flow: architecture/data-flow.md
+      - Write Path: architecture/write-path.md
       - Pipeline: architecture/pipeline.md
       - Pipeline Flow: architecture/pipeline-flow.md
       - Hybrid Retrieval: architecture/hybrid-retrieval.md
@@ -111,6 +113,7 @@ nav:
       - Overview: scripts/index.md
       - crawl.py: scripts/crawl.md
       - ingest.py: scripts/ingest.md
+      - sync_worker.py: scripts/sync-worker.md
       - seed.py: scripts/seed.md
   - API Reference:
       - Endpoints: api/endpoints.md

@@ -54,7 +54,7 @@ flowchart LR
         EMB --> Vec[Query Vector]
         Filters --> VS[VectorStore.query]
         Vec --> VS
-        Q --> BM["BM25Index\n(keyword)"]
+        Q --> BM["Keyword search\n(Elasticsearch BM25 /\nin-memory fallback)"]
         Filters --> BM
         VS --> RRF["RRF fusion\n(HybridSearch)"]
         BM --> RRF
@@ -98,9 +98,9 @@ Two things happen in parallel:
 
 The `ProductRetriever` then queries Postgres (pgvector) with both the vector and the filters translated into SQL conditions — equality for brand/category, numeric ranges for price/rating (e.g. `(metadata->>'price')::numeric <= 15000000`) — retrieving `top_k × 3` candidates (over-fetching for the scoring step to narrow down). Over-budget products are excluded here, before scoring and prompting.
 
-With `use_bm25` enabled (default), the semantic results are then fused with an in-memory **BM25** keyword ranking via **Reciprocal Rank Fusion** (`HybridSearch`), so exact-term matches (model numbers, spec tokens) get boosted. The same filters are re-applied to the BM25 hits. See [Hybrid Retrieval & Reranking](hybrid-retrieval.md) for the full technique.
+With `use_bm25` enabled (default), the semantic results are then fused with a **BM25** keyword ranking via **Reciprocal Rank Fusion** (`HybridSearch`), so exact-term matches (model numbers, spec tokens) get boosted. In production the keyword branch is served by **Elasticsearch** (`ESKeywordSearch`, index `product_chunks`), kept fresh by the CDC sync workers, with filters pushed into the ES query as `bool.filter` clauses (**pre-filter**, same guarantee as the semantic branch's SQL `WHERE`). If Elasticsearch is unreachable, the branch falls back to an **in-memory BM25** snapshot built at startup (filters re-applied in Python, a post-filter); if even that is unavailable, retrieval degrades to semantic-only. See [Hybrid Retrieval & Reranking](hybrid-retrieval.md) for the full technique.
 
-**Source:** `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`, `src/retrieval/hybrid_search.py`, `src/retrieval/keyword_search.py`
+**Source:** `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`, `src/retrieval/hybrid_search.py`, `src/retrieval/es_keyword_search.py`, `src/retrieval/keyword_search.py`
 
 **Step 3 — Score & Rank**
 
@@ -185,6 +185,37 @@ The comparison table and product descriptions are injected into a prompt templat
 
 ---
 
+## Catalog & CDC Sync Flow
+
+The pipelines above only **read** the search indexes. Writes follow a separate, continuous path so both indexes stay consistent with a single **source of truth**.
+
+The `product_catalog` table (Postgres, `REPLICA IDENTITY FULL`) is that source of truth. The CRUD API (`POST/PUT/DELETE /api/products`) writes **only** there — it never touches Elasticsearch or pgvector. **Debezium** (pgoutput plugin, `snapshot.mode: initial`) captures WAL row changes into the Kafka topic `ragshop.public.product_catalog`, and two CDC sync workers (`scripts/sync_worker.py --role indexer|embedder`) consume that single ordered stream to update the derived indexes.
+
+```mermaid
+flowchart LR
+    CRUD["CRUD API\nPOST/PUT/DELETE /api/products"] --> CAT[("product_catalog\nsource of truth")]
+    CAT -->|"WAL → Debezium (pgoutput)"| KAFKA["Kafka topic\nragshop.public.product_catalog"]
+
+    subgraph Workers["scripts/sync_worker.py"]
+        KAFKA --> IW["--role indexer\nSearchIndexer"]
+        KAFKA --> EW["--role embedder\nEmbeddingSyncer"]
+    end
+
+    IW --> ES[("Elasticsearch\nproduct_chunks (BM25)")]
+    EW --> PGV[("Postgres + pgvector\nsemantic index")]
+```
+
+- **Indexer worker** (`src/sync/indexer_worker.py`, `SearchIndexer`) → Elasticsearch keyword/BM25 index `product_chunks`; idempotent upsert/delete keyed by chunk id `{product_id}_{chunk_type}`.
+- **Embedding worker** (`src/sync/embedding_worker.py`, `EmbeddingSyncer`) → pgvector semantic index; re-embeds **only when a text-bearing field changed**. Price/rating changes are cheap **metadata-only** JSONB updates (no embedding call), and snapshot replays of unchanged rows cost zero embedding calls (detected via `content_hash`).
+
+Delivery is **at-least-once** — offsets are committed only after the handler applied the event (`src/sync/runner.py`) — and both handlers are **idempotent**, so replays converge (eventual consistency). Lag makes results *stale*, never wrong. Supporting modules: `src/sync/events.py` (parse Debezium op `c`/`u`/`d`/`r`, decode JSONB, `content_hash`), `src/sync/chunk_builder.py` (row → chunk payload, shared with `scripts/ingest.py`), `src/sync/runner.py` (Kafka consumer loop).
+
+See [Data Flow](data-flow.md#continuous-product-write-data-flow-cdc) and [Hybrid Retrieval](hybrid-retrieval.md).
+
+**Source:** `scripts/sync_worker.py`, `src/sync/*.py`, `src/catalog/product_repository.py`, `docker/debezium/product-catalog-connector.json`
+
+---
+
 ## Cross-Cutting Components
 
 ### Hybrid Search
@@ -192,12 +223,12 @@ The comparison table and product descriptions are injected into a prompt templat
 `HybridSearch` combines multiple retrieval strategies:
 
 - **Semantic search** — vector similarity via Postgres + pgvector
-- **Keyword search** — in-memory BM25 (Okapi) index built at startup from the same corpus
+- **Keyword search** — **Elasticsearch** BM25 in production (`ESKeywordSearch`, index `product_chunks`, pre-filtered via `bool.filter`, CDC-synced), with an in-memory BM25 (Okapi) snapshot as the dev fallback and semantic-only as the final fallback
 - **Metadata filter** — price, brand, category constraints, enforced on both branches
 
 Results from the two branches are fused with **Reciprocal Rank Fusion** (`rrf_k = 60`). Full details: [Hybrid Retrieval & Reranking](hybrid-retrieval.md).
 
-**Source:** `src/retrieval/hybrid_search.py`
+**Source:** `src/retrieval/hybrid_search.py`, `src/retrieval/es_keyword_search.py`
 
 ### Cross-Encoder Reranking
 
@@ -225,13 +256,13 @@ The `Guardrails` module validates both input and output:
 
 ### LLM Client
 
-The `LLMClient` provides a unified interface for three providers:
+The `LLMClient` provides a unified interface for three providers (Gemini is the default):
 
 | Provider | Model Example | SDK |
 | -------- | ------------- | --- |
+| Gemini | `gemini-2.5-flash` | `google-genai` |
 | Anthropic | `claude-sonnet-4-6` | `anthropic` |
 | OpenAI | `gpt-4o` | `openai` |
-| Gemini | `gemini-2.0-flash` | `google-genai` |
 
 The provider is configured in `configs/settings.yaml` and the appropriate API key is resolved automatically via the `PROVIDER_API_KEY_ENV` mapping.
 
@@ -246,9 +277,11 @@ get_config() → PipelineConfig
 get_embedder() → ProductEmbedder
 get_vector_store() → VectorStore
 get_retriever() → ProductRetriever
-get_searcher() → HybridSearch | ProductRetriever   # BM25 + RRF when use_bm25
-get_reranker() → CrossEncoderReranker | None       # when use_reranker
+get_keyword_backend() → ESKeywordSearch | None        # Elasticsearch when configured & reachable
+get_searcher() → HybridSearch | ProductRetriever      # ES/BM25 + RRF (use_bm25); ES → in-memory BM25 → semantic-only
+get_reranker() → CrossEncoderReranker | None          # when use_reranker
 get_llm_client() → LLMClient
+get_cached_product_repository() → ProductRepository    # CRUD source-of-truth catalog
 get_recommend_pipeline() → RecommendPipeline
 get_compare_pipeline() → ComparePipeline
 ```
@@ -263,11 +296,20 @@ FastAPI routes call these factories to get fully configured pipeline instances.
 
 ```mermaid
 flowchart TD
-    subgraph Ingestion["Data Ingestion (offline)"]
+    subgraph Ingestion["Data Ingestion (offline, bootstrap)"]
         RAW["Raw product data\n(JSON/CSV)"] --> CLEAN[DataCleaner]
         CLEAN --> CHUNK[Chunker]
         CHUNK --> EMBED[ProductEmbedder]
         EMBED --> STORE["Postgres + pgvector\n(vectors + metadata)"]
+    end
+
+    subgraph CDC["Catalog Write Path (continuous, CDC)"]
+        CRUD["CRUD API\n/api/products"] --> CAT[("product_catalog\nsource of truth")]
+        CAT -->|"WAL → Debezium"| KAFKA["Kafka topic"]
+        KAFKA --> IW["indexer worker"]
+        KAFKA --> EW["embedding worker"]
+        IW --> ESI[("Elasticsearch\nproduct_chunks")]
+        EW --> STORE
     end
 
     subgraph Runtime["Query Processing (online)"]
@@ -278,7 +320,8 @@ flowchart TD
         GUARD_OUT --> API["JSON Response"]
     end
 
-    STORE -.->|"vector search"| PIPELINE
+    STORE -.->|"semantic search"| PIPELINE
+    ESI -.->|"keyword search"| PIPELINE
 ```
 
-The system has two phases: **ingestion** (offline, batch) loads product data into the vector store, and **runtime** (online, per-request) processes user queries through the appropriate pipeline.
+The system has three data phases: **bootstrap ingestion** (offline, batch) loads the catalog plus both search indexes, the **CDC write path** (continuous) propagates every catalog write to Elasticsearch and pgvector, and **runtime** (online, per-request) answers user queries through the appropriate pipeline.

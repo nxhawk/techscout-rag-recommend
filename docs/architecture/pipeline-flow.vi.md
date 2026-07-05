@@ -54,7 +54,7 @@ flowchart LR
         EMB --> Vec[Query Vector]
         Filters --> VS[VectorStore.query]
         Vec --> VS
-        Q --> BM["BM25Index\n(keyword)"]
+        Q --> BM["Keyword search\n(Elasticsearch BM25 /\nin-memory fallback)"]
         Filters --> BM
         VS --> RRF["RRF fusion\n(HybridSearch)"]
         BM --> RRF
@@ -98,9 +98,9 @@ Hai việc diễn ra song song:
 
 `ProductRetriever` sau đó truy vấn Postgres (pgvector) với cả vector lẫn các filter đã dịch thành điều kiện SQL — so sánh bằng cho thương hiệu/danh mục, khoảng số cho giá/rating (ví dụ `(metadata->>'price')::numeric <= 15000000`) — lấy về `top_k × 3` ứng viên (lấy dư để bước chấm điểm thu hẹp lại). Sản phẩm vượt ngân sách bị loại ngay tại đây, trước khi chấm điểm và đưa vào prompt.
 
-Khi bật `use_bm25` (mặc định), kết quả semantic được hợp nhất với bảng xếp hạng keyword **BM25** in-memory qua **Reciprocal Rank Fusion** (`HybridSearch`), nhờ đó các khớp chính xác theo từ (mã model, thông số) được đẩy hạng. Cùng bộ filter được áp lại cho các hit BM25. Xem [Truy xuất lai & Reranking](hybrid-retrieval.md) để hiểu đầy đủ kỹ thuật.
+Khi bật `use_bm25` (mặc định), kết quả semantic được hợp nhất với bảng xếp hạng keyword **BM25** qua **Reciprocal Rank Fusion** (`HybridSearch`), nhờ đó các khớp chính xác theo từ (mã model, thông số) được đẩy hạng. Ở production, nhánh keyword do **Elasticsearch** phục vụ (`ESKeywordSearch`, index `product_chunks`), luôn fresh nhờ các CDC sync worker, với filter đẩy vào query ES dưới dạng mệnh đề `bool.filter` (**pre-filter**, cùng đảm bảo như mệnh đề SQL `WHERE` của nhánh semantic). Nếu Elasticsearch không kết nối được, nhánh này rơi về snapshot **BM25 in-memory** build lúc khởi động (filter áp lại bằng Python, tức post-filter); nếu cả cái đó cũng không có, truy xuất suy giảm về semantic-only. Xem [Truy xuất lai & Reranking](hybrid-retrieval.vi.md) để hiểu đầy đủ kỹ thuật.
 
-**Nguồn:** `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`, `src/retrieval/hybrid_search.py`, `src/retrieval/keyword_search.py`
+**Nguồn:** `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`, `src/retrieval/hybrid_search.py`, `src/retrieval/es_keyword_search.py`, `src/retrieval/keyword_search.py`
 
 **Bước 3 — Chấm điểm & Xếp hạng**
 
@@ -185,6 +185,37 @@ Bảng so sánh và mô tả sản phẩm được chèn vào prompt template. L
 
 ---
 
+## Catalog & CDC Sync Flow
+
+Các pipeline ở trên chỉ **đọc** các index tìm kiếm. Việc ghi đi theo một đường riêng, liên tục, để cả hai index luôn nhất quán với một **source of truth** duy nhất.
+
+Bảng `product_catalog` (Postgres, `REPLICA IDENTITY FULL`) chính là source of truth đó. API CRUD (`POST/PUT/DELETE /api/products`) **chỉ** ghi vào đó — không bao giờ động tới Elasticsearch hay pgvector. **Debezium** (plugin pgoutput, `snapshot.mode: initial`) bắt thay đổi row từ WAL vào Kafka topic `ragshop.public.product_catalog`, và hai CDC sync worker (`scripts/sync_worker.py --role indexer|embedder`) consume một stream có thứ tự duy nhất để cập nhật các index dẫn xuất.
+
+```mermaid
+flowchart LR
+    CRUD["API CRUD\nPOST/PUT/DELETE /api/products"] --> CAT[("product_catalog\nsource of truth")]
+    CAT -->|"WAL → Debezium (pgoutput)"| KAFKA["Kafka topic\nragshop.public.product_catalog"]
+
+    subgraph Workers["scripts/sync_worker.py"]
+        KAFKA --> IW["--role indexer\nSearchIndexer"]
+        KAFKA --> EW["--role embedder\nEmbeddingSyncer"]
+    end
+
+    IW --> ES[("Elasticsearch\nproduct_chunks (BM25)")]
+    EW --> PGV[("Postgres + pgvector\nsemantic index")]
+```
+
+- **Indexer worker** (`src/sync/indexer_worker.py`, `SearchIndexer`) → index keyword/BM25 Elasticsearch `product_chunks`; upsert/delete idempotent theo chunk id `{product_id}_{chunk_type}`.
+- **Embedding worker** (`src/sync/embedding_worker.py`, `EmbeddingSyncer`) → index semantic pgvector; chỉ re-embed **khi trường mang text thay đổi**. Thay đổi giá/rating là update **metadata-only** JSONB rẻ (không gọi embedding), và replay snapshot của các row không đổi tốn 0 lần gọi embedding (phát hiện qua `content_hash`).
+
+Delivery là **at-least-once** — offset chỉ commit sau khi handler áp xong event (`src/sync/runner.py`) — và cả hai handler đều **idempotent**, nên replay luôn hội tụ (eventual consistency). Lag chỉ làm kết quả *trễ*, không bao giờ sai. Các module hỗ trợ: `src/sync/events.py` (parse Debezium op `c`/`u`/`d`/`r`, decode JSONB, `content_hash`), `src/sync/chunk_builder.py` (row → chunk payload, dùng chung với `scripts/ingest.py`), `src/sync/runner.py` (vòng lặp Kafka consumer).
+
+Xem [Luồng dữ liệu](data-flow.vi.md) và [Truy xuất lai](hybrid-retrieval.vi.md).
+
+**Nguồn:** `scripts/sync_worker.py`, `src/sync/*.py`, `src/catalog/product_repository.py`, `docker/debezium/product-catalog-connector.json`
+
+---
+
 ## Các thành phần dùng chung (Cross-Cutting)
 
 ### Hybrid Search
@@ -192,12 +223,12 @@ Bảng so sánh và mô tả sản phẩm được chèn vào prompt template. L
 `HybridSearch` kết hợp nhiều chiến lược truy xuất:
 
 - **Semantic search** — độ tương đồng vector qua Postgres + pgvector
-- **Keyword search** — BM25 (Okapi) index in-memory, build lúc khởi động từ cùng corpus
+- **Keyword search** — **Elasticsearch** BM25 ở production (`ESKeywordSearch`, index `product_chunks`, pre-filter qua `bool.filter`, CDC-synced), với snapshot BM25 (Okapi) in-memory làm fallback cho dev và semantic-only làm fallback cuối
 - **Metadata filter** — ràng buộc giá, thương hiệu, danh mục, áp trên cả hai nhánh
 
-Kết quả từ hai nhánh được hợp nhất bằng **Reciprocal Rank Fusion** (`rrf_k = 60`). Chi tiết đầy đủ: [Truy xuất lai & Reranking](hybrid-retrieval.md).
+Kết quả từ hai nhánh được hợp nhất bằng **Reciprocal Rank Fusion** (`rrf_k = 60`). Chi tiết đầy đủ: [Truy xuất lai & Reranking](hybrid-retrieval.vi.md).
 
-**Nguồn:** `src/retrieval/hybrid_search.py`
+**Nguồn:** `src/retrieval/hybrid_search.py`, `src/retrieval/es_keyword_search.py`
 
 ### Cross-Encoder Reranking
 
@@ -225,13 +256,13 @@ Module `Guardrails` validate cả input lẫn output:
 
 ### LLM Client
 
-`LLMClient` cung cấp giao diện thống nhất cho ba provider:
+`LLMClient` cung cấp giao diện thống nhất cho ba provider (Gemini là mặc định):
 
 | Provider | Model ví dụ | SDK |
 | -------- | ------------- | --- |
+| Gemini | `gemini-2.5-flash` | `google-genai` |
 | Anthropic | `claude-sonnet-4-6` | `anthropic` |
 | OpenAI | `gpt-4o` | `openai` |
-| Gemini | `gemini-2.0-flash` | `google-genai` |
 
 Provider được cấu hình trong `configs/settings.yaml` và API key tương ứng được tự động resolve qua mapping `PROVIDER_API_KEY_ENV`.
 
@@ -246,9 +277,11 @@ get_config() → PipelineConfig
 get_embedder() → ProductEmbedder
 get_vector_store() → VectorStore
 get_retriever() → ProductRetriever
-get_searcher() → HybridSearch | ProductRetriever   # BM25 + RRF khi use_bm25
-get_reranker() → CrossEncoderReranker | None       # khi use_reranker
+get_keyword_backend() → ESKeywordSearch | None        # Elasticsearch khi được cấu hình & sẵn sàng
+get_searcher() → HybridSearch | ProductRetriever      # ES/BM25 + RRF (use_bm25); ES → BM25 in-memory → semantic-only
+get_reranker() → CrossEncoderReranker | None          # khi use_reranker
 get_llm_client() → LLMClient
+get_cached_product_repository() → ProductRepository    # catalog source-of-truth cho CRUD
 get_recommend_pipeline() → RecommendPipeline
 get_compare_pipeline() → ComparePipeline
 ```
@@ -263,11 +296,20 @@ Các route FastAPI gọi các factory này để lấy instance pipeline đã đ
 
 ```mermaid
 flowchart TD
-    subgraph Ingestion["Nạp dữ liệu (offline)"]
+    subgraph Ingestion["Nạp dữ liệu (offline, bootstrap)"]
         RAW["Dữ liệu sản phẩm thô\n(JSON/CSV)"] --> CLEAN[DataCleaner]
         CLEAN --> CHUNK[Chunker]
         CHUNK --> EMBED[ProductEmbedder]
         EMBED --> STORE["Postgres + pgvector\n(vector + metadata)"]
+    end
+
+    subgraph CDC["Luồng ghi catalog (liên tục, CDC)"]
+        CRUD["API CRUD\n/api/products"] --> CAT[("product_catalog\nsource of truth")]
+        CAT -->|"WAL → Debezium"| KAFKA["Kafka topic"]
+        KAFKA --> IW["indexer worker"]
+        KAFKA --> EW["embedding worker"]
+        IW --> ESI[("Elasticsearch\nproduct_chunks")]
+        EW --> STORE
     end
 
     subgraph Runtime["Xử lý truy vấn (online)"]
@@ -278,7 +320,8 @@ flowchart TD
         GUARD_OUT --> API["JSON Response"]
     end
 
-    STORE -.->|"vector search"| PIPELINE
+    STORE -.->|"semantic search"| PIPELINE
+    ESI -.->|"keyword search"| PIPELINE
 ```
 
-Hệ thống có hai giai đoạn: **ingestion** (offline, theo batch) nạp dữ liệu sản phẩm vào vector store, và **runtime** (online, theo từng request) xử lý truy vấn người dùng qua pipeline phù hợp.
+Hệ thống có ba giai đoạn dữ liệu: **bootstrap ingestion** (offline, theo batch) nạp catalog cùng cả hai index tìm kiếm, **luồng ghi CDC** (liên tục) lan truyền mọi thay đổi catalog sang Elasticsearch và pgvector, và **runtime** (online, theo từng request) trả lời truy vấn người dùng qua pipeline phù hợp.

@@ -1,12 +1,22 @@
 # Nạp dữ liệu (Ingestion)
 
-Script nạp dữ liệu (`scripts/ingest.py`) biến dữ liệu sản phẩm thô thành các
-vector có thể tìm kiếm. Nó đọc sản phẩm từ đĩa, chuẩn hóa, chia mỗi sản phẩm
-thành các chunk theo ngữ cảnh, embedding từng chunk, rồi upsert kết quả vào kho
-PostgreSQL + pgvector phục vụ truy xuất.
+Script nạp dữ liệu (`scripts/ingest.py`) là đường **bootstrap** cho một hệ thống
+mới tinh. Nó đọc sản phẩm thô từ đĩa, chuẩn hóa, rồi ghi vào **ba đích** để hệ
+thống dùng được ngay:
 
-Đây là cầu nối giữa [Crawler](crawler.md) (tạo dữ liệu thô) và các pipeline
-gợi ý/so sánh (truy vấn vector store).
+1. bảng source of truth `product_catalog` (qua `ProductRepository.upsert_many`,
+   được ghi **đầu tiên** — mọi thứ khác đều dẫn xuất từ nó);
+2. kho PostgreSQL + pgvector (bảng `products`) phục vụ truy xuất ngữ nghĩa;
+3. index keyword Elasticsearch (`product_chunks`) — một bulk upsert best-effort,
+   được bỏ qua nhẹ nhàng khi cluster không truy cập được.
+
+Đây là cầu nối giữa [Crawler](crawler.vi.md) (tạo dữ liệu thô) và các pipeline
+gợi ý/so sánh (truy vấn các index tìm kiếm).
+
+Với các thay đổi **về sau** sau khi bootstrap, bạn không chạy lại script này —
+việc ghi đi qua API CRUD `/api/products` → `product_catalog` → Debezium → Kafka,
+và các sync worker CDC giữ cho cả hai index luôn mới. Xem
+[Catalog, CDC & chạy lại](#catalog-cdc-re-runs) bên dưới.
 
 ## Cách chạy
 
@@ -14,6 +24,7 @@ gợi ý/so sánh (truy vấn vector store).
 uv run python scripts/ingest.py                 # source=crawled (mặc định)
 uv run python scripts/ingest.py --source products
 uv run python scripts/ingest.py --source all
+uv run python scripts/ingest.py --catalog-only  # chỉ product_catalog; CDC build các index
 ```
 
 | `--source`   | Đọc từ                                                  | Số lượng thường thấy |
@@ -22,16 +33,24 @@ uv run python scripts/ingest.py --source all
 | `products`   | `data/raw/products/*.json` và `*.csv`                  | 3 (dữ liệu mẫu)      |
 | `all`        | cả hai nguồn trên                                       | ~95 sản phẩm         |
 
+Với `--catalog-only`, script chỉ ghi bảng `product_catalog` và để pipeline CDC
+(Debezium snapshot → indexer + embedding worker) build cả hai index tìm kiếm từ
+snapshot Debezium.
+
 ## Tổng quan luồng
 
 ```mermaid
 flowchart TD
     ENV[".env + configs/settings.yaml"] --> LOAD["ProductLoader<br/>load_crawled / load_all"]
     LOAD --> CLEAN["DataCleaner<br/>build_product_profile"]
-    CLEAN --> CHUNK["ProductChunker<br/>chunk_product"]
+    CLEAN --> REPO["ProductRepository<br/>upsert_many (source of truth)"]
+    REPO --> CAT[("bảng: product_catalog")]
+    CLEAN -->|"trừ khi --catalog-only"| CHUNK["ProductChunker +<br/>build_chunk_payload (content_hash)"]
     CHUNK --> EMBED["ProductEmbedder<br/>Gemini embeddings (768 chiều)"]
     EMBED --> STORE["VectorStore<br/>Postgres + pgvector"]
     STORE --> DB[("bảng: products")]
+    CHUNK --> ES["Elasticsearch<br/>index keyword (best-effort)"]
+    ES --> ESI[("index: product_chunks")]
 ```
 
 ## Bước 1 — Môi trường & cấu hình
@@ -212,8 +231,30 @@ uv run python scripts/ingest.py
 Chỉ drop/tạo lại bảng (hoặc xóa cả volume) khi đổi `embedding_dim`, vì kích thước
 cột `vector(768)` được cố định lúc tạo.
 
+### Catalog, CDC & chạy lại {#catalog-cdc-re-runs}
+
+Vài điều cần nhớ khi stack CDC đã chạy:
+
+- **Catalog là source of truth.** `product_catalog` được ghi đầu tiên và cả hai
+  index tìm kiếm đều dẫn xuất từ nó. `ingest.py` chỉ bootstrap; việc ghi về sau đi
+  qua API CRUD, nên bạn không nên chạy lại script này để áp các chỉnh sửa.
+- **`content_hash` giúp replay snapshot rẻ.** Mỗi chunk do `build_chunk_payload`
+  tạo ra mang một `content_hash` của các trường chứa văn bản — *cùng* payload mà
+  các sync worker CDC dựng. Khi Debezium sau đó replay snapshot ban đầu của
+  catalog, embedding worker thấy các vector đã hiện hành và thực hiện **không một
+  lời gọi embedding API nào** cho các sản phẩm không đổi.
+- **Đánh index Elasticsearch là best-effort.** Nếu cluster không truy cập được,
+  bulk upsert bị bỏ qua kèm cảnh báo; các sync worker CDC dựng lại index keyword
+  từ snapshot Debezium. Với `--catalog-only` đây là đường đi dự kiến cho *cả hai*
+  index.
+
+Về đối tác liên tục của bước bootstrap một lần này, xem
+[Luồng dữ liệu ghi sản phẩm (CDC)](../architecture/data-flow.vi.md)
+và trang [sync_worker.py](../scripts/sync-worker.vi.md).
+
 ## Liên quan
 
-- [Crawler](crawler.md) — tạo ra dữ liệu thô được nạp ở đây.
-- [Data Flow](../architecture/data-flow.md) — góc nhìn toàn hệ thống.
-- [Pipeline](../architecture/pipeline.md) — cách vector đã lưu được truy vấn.
+- [Crawler](crawler.vi.md) — tạo ra dữ liệu thô được nạp ở đây.
+- [sync_worker.py](../scripts/sync-worker.vi.md) — các worker CDC giữ index luôn mới.
+- [Data Flow](../architecture/data-flow.vi.md) — góc nhìn toàn hệ thống.
+- [Pipeline](../architecture/pipeline.vi.md) — cách vector đã lưu được truy vấn.

@@ -1,12 +1,22 @@
 # Ingestion
 
-The ingestion script (`scripts/ingest.py`) turns raw product data into
-searchable vectors. It loads products from disk, normalizes them, splits each
-product into contextual chunks, embeds every chunk, and upserts the result into
-the PostgreSQL + pgvector store that powers retrieval.
+The ingestion script (`scripts/ingest.py`) is the **bootstrap** path for a fresh
+system. It loads raw products from disk, normalizes them, and writes **three
+targets** so the stack is immediately usable:
+
+1. the source-of-truth `product_catalog` table (via `ProductRepository.upsert_many`,
+   written **first** — everything else derives from it);
+2. the PostgreSQL + pgvector store (`products` table) that powers semantic retrieval;
+3. the Elasticsearch keyword index (`product_chunks`) — a best-effort bulk upsert,
+   gracefully skipped when the cluster is unreachable.
 
 It is the bridge between the [Crawler](crawler.md) (which produces raw data) and
-the recommend/compare pipelines (which query the vector store).
+the recommend/compare pipelines (which query the search indexes).
+
+For **ongoing** changes after bootstrap you do not re-run this script — writes go
+through the CRUD API `/api/products` → `product_catalog` → Debezium → Kafka, and
+the CDC sync workers keep both indexes fresh. See
+[Catalog, CDC & re-runs](#catalog-cdc-re-runs) below.
 
 ## Running it
 
@@ -14,6 +24,7 @@ the recommend/compare pipelines (which query the vector store).
 uv run python scripts/ingest.py                 # source=crawled (default)
 uv run python scripts/ingest.py --source products
 uv run python scripts/ingest.py --source all
+uv run python scripts/ingest.py --catalog-only  # only product_catalog; CDC builds the indexes
 ```
 
 | `--source`   | Reads from                                             | Typical size |
@@ -22,16 +33,24 @@ uv run python scripts/ingest.py --source all
 | `products`   | `data/raw/products/*.json` and `*.csv`                 | 3 (samples)  |
 | `all`        | both of the above                                      | ~95 products |
 
+With `--catalog-only`, the script writes **only** the `product_catalog` table and
+lets the CDC pipeline (Debezium snapshot → indexer + embedding workers) build both
+search indexes from the Debezium snapshot instead.
+
 ## Pipeline at a glance
 
 ```mermaid
 flowchart TD
     ENV[".env + configs/settings.yaml"] --> LOAD["ProductLoader<br/>load_crawled / load_all"]
     LOAD --> CLEAN["DataCleaner<br/>build_product_profile"]
-    CLEAN --> CHUNK["ProductChunker<br/>chunk_product"]
+    CLEAN --> REPO["ProductRepository<br/>upsert_many (source of truth)"]
+    REPO --> CAT[("table: product_catalog")]
+    CLEAN -->|"unless --catalog-only"| CHUNK["ProductChunker +<br/>build_chunk_payload (content_hash)"]
     CHUNK --> EMBED["ProductEmbedder<br/>Gemini embeddings (768-dim)"]
     EMBED --> STORE["VectorStore<br/>Postgres + pgvector"]
     STORE --> DB[("table: products")]
+    CHUNK --> ES["Elasticsearch<br/>keyword index (best-effort)"]
+    ES --> ESI[("index: product_chunks")]
 ```
 
 ## Step 1 — Environment & configuration
@@ -214,8 +233,30 @@ uv run python scripts/ingest.py
 Only drop and recreate the table (or the whole volume) when changing
 `embedding_dim`, since the `vector(768)` column size is fixed at creation.
 
+### Catalog, CDC & re-runs
+
+A few things to keep in mind once the CDC stack is running:
+
+- **The catalog is the source of truth.** `product_catalog` is written first and
+  both search indexes derive from it. `ingest.py` only bootstraps; ongoing writes
+  go through the CRUD API, so you should not re-run this script to apply edits.
+- **`content_hash` makes snapshot replays cheap.** Every chunk built by
+  `build_chunk_payload` carries a `content_hash` of the text-bearing fields — the
+  *same* payload the CDC sync workers build. When Debezium later replays the
+  initial snapshot of the catalog, the embedding worker sees the vectors are
+  already current and makes **zero embedding API calls** for unchanged products.
+- **Elasticsearch indexing is best-effort.** If the cluster is unreachable the
+  bulk upsert is skipped with a warning; the CDC sync workers rebuild the keyword
+  index from the Debezium snapshot. With `--catalog-only` this is the intended
+  path for *both* indexes.
+
+For the continuous counterpart to this one-time bootstrap, see the
+[Continuous: Product Write Data Flow (CDC)](../architecture/data-flow.md#continuous-product-write-data-flow-cdc)
+and the [sync_worker.py](../scripts/sync-worker.md) page.
+
 ## Related
 
 - [Crawler](crawler.md) — produces the raw data consumed here.
+- [sync_worker.py](../scripts/sync-worker.md) — the CDC workers that keep the indexes fresh.
 - [Data Flow](../architecture/data-flow.md) — end-to-end system view.
 - [Pipeline](../architecture/pipeline.md) — how the stored vectors are queried.
