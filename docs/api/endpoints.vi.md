@@ -215,3 +215,74 @@ Tìm kiếm sản phẩm theo truy vấn kèm filter tùy chọn.
   "total": 1
 }
 ```
+
+## Quản lý sản phẩm (CRUD)
+
+Catalog là **source of truth**: các endpoint này chỉ ghi vào bảng
+`product_catalog`. Debezium (CDC) bắt thay đổi từ WAL và các sync worker tự
+lan truyền sang Elasticsearch + pgvector — thường trong vài giây (eventual
+consistency).
+
+### Tạo mới
+
+```
+POST /api/products            → 201
+```
+
+| Trường | Kiểu | Bắt buộc | Mô tả |
+| ------ | ---- | -------- | ----- |
+| `product_id` | string | Không | Tự sinh từ `name` nếu bỏ trống |
+| `name` | string | Có | Tên sản phẩm |
+| `brand`, `category`, `description`, `review_summary`, `currency` | string | Không | Các trường text |
+| `price` | int ≥ 0 | Không | Giá (VND) |
+| `specifications` | object | Không | Thông số kỹ thuật |
+| `pros`, `cons`, `tags` | string[] | Không | Danh sách |
+| `avg_rating` | float 0–5 | Không | Điểm đánh giá trung bình |
+| `review_count` | int ≥ 0 | Không | Số lượt đánh giá |
+
+```bash
+curl -X POST http://localhost:8000/api/products \
+  -H "Content-Type: application/json" \
+  -d '{"product_id": "xiaomi-15", "name": "Xiaomi 15", "brand": "Xiaomi",
+       "category": "smartphone", "price": 18990000,
+       "description": "Snapdragon 8 Elite, camera Leica."}'
+```
+
+**Response:** `{"product_id": "xiaomi-15", "message": "Đã tạo sản phẩm. Dữ liệu tìm kiếm sẽ được đồng bộ trong giây lát."}`
+
+`409` nếu id đã tồn tại.
+
+### Cập nhật (partial)
+
+```
+PUT /api/products/{product_id}
+```
+
+Chỉ gửi các trường cần đổi. Thay đổi chỉ giá/rating được lan truyền bằng
+update metadata rẻ (không re-embed); thay đổi text sẽ re-embed các chunk
+của sản phẩm.
+
+```bash
+curl -X PUT http://localhost:8000/api/products/xiaomi-15 \
+  -H "Content-Type: application/json" -d '{"price": 17490000}'
+```
+
+`404` nếu sản phẩm không tồn tại; `422` nếu body rỗng.
+
+### Xóa
+
+```
+DELETE /api/products/{product_id}
+```
+
+Xóa sản phẩm khỏi catalog; CDC gỡ khỏi cả hai index tìm kiếm. `404` nếu
+không tồn tại.
+
+### Đọc
+
+```
+GET /api/products/{product_id}
+GET /api/products?limit=50&offset=0
+```
+
+Đọc thẳng catalog (luôn nhất quán mạnh — không có độ trễ index).

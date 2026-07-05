@@ -17,6 +17,9 @@ dependencies = [
     # Embedding & Vector DB (Postgres + pgvector)
     "psycopg[binary]>=3.1.0",
     "pgvector>=0.3.0",
+    # Keyword search & CDC sync (Elasticsearch + Kafka)
+    "elasticsearch>=8.13.0,<9",
+    "confluent-kafka>=2.4.0",
     # Data Processing
     "pandas>=2.2.0",
     "beautifulsoup4>=4.12.0",

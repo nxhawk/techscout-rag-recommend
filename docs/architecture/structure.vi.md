@@ -12,9 +12,11 @@ rag-product-recommend/
 ├── src/                        # Logic nghiệp vụ cốt lõi
 │   ├── crawler/                # Web crawling (thu thập dữ liệu thô)
 │   │   └── spiders/            #   Một spider cho mỗi nguồn (tgdd, cellphones)
+│   ├── catalog/                # Bảng sản phẩm source-of-truth (CRUD)
 │   ├── ingestion/               # Nạp & chuẩn hóa dữ liệu
 │   ├── embedding/               # Embedding & Vector DB
 │   ├── retrieval/               # Truy xuất & tìm kiếm sản phẩm
+│   ├── sync/                   # CDC sync worker (Debezium → ES/pgvector)
 │   ├── generation/               # Sinh nội dung bằng LLM & prompt
 │   ├── pipeline/                # Tầng điều phối
 │   │   ├── recommend/          #   Logic nghiệp vụ gợi ý
@@ -82,6 +84,14 @@ Toàn bộ logic domain nằm ở đây. Đây là một Python package thuần 
 
 **Khi nào thêm file mới:** Khi crawl một nguồn mới — thêm `<name>_spider.py` và một block `SourceConfig` trong `configs/crawler.yaml`.
 
+### `src/catalog/` — Source of Truth (Catalog sản phẩm)
+
+**Mục đích:** Truy cập CRUD vào bảng `product_catalog` — source of truth duy nhất mà CDC capture. Các index tìm kiếm được dẫn xuất từ nó và không bao giờ được API handler ghi trực tiếp.
+
+| File | Mục đích | Khi nào thêm/cập nhật |
+| ---- | -------- | ---------------------- |
+| `product_repository.py` | `ProductRepository` — create/upsert/update/delete/get/list trên `product_catalog` (SQL parameterized, `REPLICA IDENTITY FULL` cho before-image Debezium) | Khi thêm trường sản phẩm (nhớ cập nhật cả `api/schemas.py` và chunker) |
+
 ### `src/ingestion/` — Nạp & chuẩn hóa dữ liệu
 
 **Mục đích:** Nạp dữ liệu sản phẩm thô từ nhiều nguồn khác nhau, làm sạch, parse thông số, và chia nhỏ thành các đơn vị phù hợp để embedding.
@@ -116,12 +126,25 @@ Toàn bộ logic domain nằm ở đây. Đây là một Python package thuần 
 | File | Mục đích | Khi nào thêm/cập nhật |
 | ---- | ------- | ------------------- |
 | `product_retriever.py` | Retriever chính — kết hợp trích xuất filter, embedding, truy vấn vector, và chấm điểm thành một luồng | Khi đổi thứ tự pipeline truy xuất hoặc thêm bước truy xuất mới |
-| `hybrid_search.py` | Kết hợp semantic search + keyword search (BM25) + metadata filter | Khi triển khai BM25, thêm chiến lược tìm kiếm mới, hoặc đổi trọng số fusion |
+| `hybrid_search.py` | Hợp nhất nhánh semantic + keyword bằng RRF; hỗ trợ backend pre-filter (ES) và fallback BM25 in-memory post-filter | Khi thêm chiến lược tìm kiếm mới hoặc đổi hành vi fusion |
+| `es_keyword_search.py` | Backend keyword Elasticsearch — BM25 với pre-filter `bool.filter`, upsert/delete chunk cho sync worker | Khi đổi mapping ES, dạng query, hoặc filter pushdown |
 | `filter_engine.py` | Trích xuất filter có cấu trúc (giá, thương hiệu, danh mục, rating) từ truy vấn ngôn ngữ tự nhiên tiếng Việt | Khi hỗ trợ loại filter mới (vd: màu sắc, dung lượng) hoặc thêm pattern từ khóa mới |
 | `similarity_scorer.py` | Tính composite relevance score từ độ tương đồng ngữ nghĩa + tín hiệu metadata | Khi đổi trọng số chấm điểm hoặc thêm chiều chấm điểm mới |
 | `reranker.py` | Rerank bằng cross-encoder `ms-marco-MiniLM-L-6-v2` để chấm điểm liên quan chính xác hơn | Khi đổi model reranker hoặc thêm chiến lược rerank (vd: rerank bằng LLM) |
 
 **Khi nào thêm file mới:** Khi thêm một chiến lược tìm kiếm mới (vd: `bm25_search.py`), một loại filter đủ phức tạp để cần module riêng, hoặc một thuật toán chấm điểm mới.
+
+### `src/sync/` — CDC Sync Worker
+
+**Mục đích:** Consume stream thay đổi Debezium (Kafka) và giữ các index tìm kiếm dẫn xuất đồng bộ với catalog. Xem [Truy xuất lai](hybrid-retrieval.vi.md).
+
+| File | Mục đích | Khi nào thêm/cập nhật |
+| ---- | -------- | ---------------------- |
+| `events.py` | Parse message Debezium thành `ChangeEvent`; `TEXT_FIELDS` / `content_hash` / `text_changed` quyết định khi nào cần re-embed | Khi thêm trường sản phẩm (quyết định: mang text hay chỉ metadata) |
+| `chunk_builder.py` | Row catalog → chunk payload (ids, documents, metadatas kèm `content_hash`), dùng chung với ingest | Khi đổi cấu trúc chunk |
+| `indexer_worker.py` | `SearchIndexer` — upsert/delete chunk idempotent vào Elasticsearch | Khi đổi hành vi index keyword |
+| `embedding_worker.py` | `EmbeddingSyncer` — re-embed khi text đổi, update metadata-only cho giá/rating, xóa khi `d` | Khi đổi logic quyết định re-embed hoặc luồng upsert vector |
+| `runner.py` | Vòng lặp Kafka consumer — at-least-once, commit sau khi áp xong | Khi đổi ngữ nghĩa delivery hoặc xử lý lỗi |
 
 ### `src/generation/` — Sinh nội dung bằng LLM
 
@@ -205,6 +228,7 @@ Toàn bộ logic domain nằm ở đây. Đây là một Python package thuần 
 | `recommend.py` | Handler cho `POST /api/recommend` | Khi đổi định dạng request/response gợi ý |
 | `compare.py` | Handler cho `POST /api/compare` | Khi đổi định dạng request/response so sánh |
 | `search.py` | Handler cho `POST /api/search` | Khi thêm tính năng hoặc filter tìm kiếm |
+| `products.py` | `POST/PUT/DELETE/GET /api/products` — CRUD trên catalog source-of-truth (CDC lan truyền sang các index) | Khi đổi contract ghi sản phẩm |
 
 **`api/middleware/`** — Middleware request/response.
 
@@ -254,6 +278,7 @@ Toàn bộ logic domain nằm ở đây. Đây là một Python package thuần 
 | `crawl.py` | Crawl dữ liệu sản phẩm thô vào `data/raw/crawled/` (`--source`, `--category`, `--all`) | Khi đổi option CLI của crawl hoặc thêm nguồn mới |
 | `ingest.py` | Pipeline nạp dữ liệu đầy đủ: load → clean → chunk → embed → lưu vào Postgres (pgvector) | Khi đổi luồng ingestion hoặc thêm nguồn dữ liệu mới |
 | `seed.py` | Sinh dữ liệu sản phẩm mẫu cho phát triển/testing | Khi thêm danh mục sản phẩm mới hoặc đổi schema dữ liệu mẫu |
+| `sync_worker.py` | Chạy CDC sync worker (`--role indexer` → Elasticsearch, `--role embedder` → pgvector) | Khi thêm index dẫn xuất mới hoặc đổi wiring worker |
 
 **Khi nào thêm file mới:** Khi cần một tác vụ CLI mới (vd: `migrate.py` cho migration vector store, `export.py` cho export dữ liệu).
 
@@ -297,7 +322,8 @@ Toàn bộ logic domain nằm ở đây. Đây là một Python package thuần 
 | File | Mục đích | Khi nào thêm/cập nhật |
 | ---- | ------- | ------------------- |
 | `Dockerfile` | Multi-stage build dùng uv — cài dependency, copy source, chạy uvicorn | Khi đổi base image, version Python, hoặc bước build |
-| `docker-compose.yml` | Stack dev cục bộ: app + Redis | Khi thêm service mới (vd: Qdrant, PostgreSQL) hoặc đổi port/volume |
+| `docker-compose.yml` | Stack CDC đầy đủ: app, Postgres (wal_level=logical), Elasticsearch, Kafka (KRaft), Debezium Connect + connect-init, hai sync worker, Redis | Khi thêm service mới hoặc đổi port/volume |
+| `debezium/product-catalog-connector.json` | Cấu hình Debezium Postgres connector (đăng ký idempotent bởi `connect-init`) | Khi đổi bảng capture, topic prefix, hoặc snapshot mode |
 
 ---
 

@@ -2,7 +2,7 @@
 
 Trang này theo dõi hệ thống từ góc nhìn **dữ liệu** — dữ liệu có hình dạng gì ở mỗi giai đoạn, được lưu ở đâu, và di chuyển giữa các thành phần như thế nào. Về luồng điều khiển / các bước thuật toán, xem [Pipeline Flow](pipeline-flow.vi.md); về cấu trúc tĩnh của các đơn vị chạy được, xem [Mô hình C4](c4-model.vi.md).
 
-Có hai vòng đời dữ liệu độc lập: vòng đời **offline** dạng batch để nạp dữ liệu vào vector store, và vòng đời **online** theo từng request để trả lời câu hỏi người dùng.
+Có ba vòng đời dữ liệu: vòng đời **offline** dạng batch để bootstrap catalog và cả hai index tìm kiếm, vòng đời **liên tục** (CDC) lan truyền mọi lần ghi catalog sang các index, và vòng đời **online** theo từng request để trả lời câu hỏi người dùng.
 
 ```mermaid
 flowchart LR
@@ -27,7 +27,18 @@ flowchart LR
         O -->|"parse"| P["JSON có cấu trúc\n(giải thích tiếng Việt)"]
     end
 
+    subgraph CDC["Vòng đời ghi catalog (liên tục, CDC)"]
+        direction TB
+        W["Request CRUD\nPOST/PUT/DELETE /api/products"] -->|"ghi SQL"| G[("product_catalog\nsource of truth")]
+        G -->|"WAL → Debezium"| H["change event\n(op, before, after)"]
+        H -->|"Kafka topic"| W1["indexer worker\n→ chunk doc"]
+        H -->|"Kafka topic"| W2["embedding worker\n→ vector hoặc\nchỉ metadata"]
+        W1 --> ES[("Elasticsearch\nproduct_chunks")]
+        W2 --> F
+    end
+
     F -.->|"tìm kiếm vector\n+ metadata"| L
+    ES -.->|"BM25 keyword\nsearch"| L
 ```
 
 ## Offline: Luồng dữ liệu Ingestion
@@ -42,7 +53,22 @@ flowchart LR
 | Embed | Văn bản chunk | Vector dày đặc | `list[float]`, 1536 chiều (`text-embedding-3-small`) | — | `src/embedding/product_embedder.py` |
 | Store | Vector + document + metadata | Bảng đã đánh index | Bảng Postgres với cột pgvector (HNSW, cosine similarity) | Postgres (volume `pgdata`) | `src/embedding/vector_store.py` |
 
-Toàn bộ vòng đời này chạy qua `scripts/crawl.py` rồi `scripts/ingest.py` — không bao giờ tự động kích hoạt bởi một request API.
+Toàn bộ vòng đời này chạy qua `scripts/crawl.py` rồi `scripts/ingest.py` — không bao giờ tự động kích hoạt bởi một request API. `ingest.py` cũng upsert các profile đã làm sạch vào `product_catalog` (source of truth) và bulk-index chunk vào Elasticsearch; với `--catalog-only` nó chỉ ghi catalog và để CDC worker tự build cả hai index từ snapshot Debezium.
+
+## Liên tục: Luồng dữ liệu ghi sản phẩm (CDC)
+
+Mọi lần ghi catalog (API CRUD hoặc ingest) đi qua một pipeline có thứ tự duy nhất tới cả hai index tìm kiếm:
+
+| Bước | Input | Output | Định dạng | Nguồn |
+| ---- | ----- | ------ | --------- | ----- |
+| Ghi CRUD | HTTP request (`/api/products`) | Row trong `product_catalog` | SQL (parameterized) | `api/routes/products.py`, `src/catalog/product_repository.py` |
+| Capture | WAL (logical decoding) | Debezium change event | JSON: `op` (c/u/d/r), `before`, `after` | Debezium connector (`docker/debezium/`) |
+| Vận chuyển | Change event | Kafka record | Topic `ragshop.public.product_catalog` | Kafka |
+| Parse | Kafka record | `ChangeEvent` | Dataclass (JSONB đã decode) | `src/sync/events.py` |
+| Index (keyword) | `ChangeEvent` | Chunk doc upsert/delete | ES doc, id `{product_id}_{chunk_type}` | `src/sync/indexer_worker.py` |
+| Index (semantic) | `ChangeEvent` | Re-embed chunk **hoặc** update metadata JSONB | Row pgvector; chỉ gọi embedding khi trường text đổi (`content_hash`) | `src/sync/embedding_worker.py` |
+
+Delivery là at-least-once (commit offset sau khi áp xong) và cả hai applier đều idempotent, nên replay luôn hội tụ. Lag chỉ làm kết quả tìm kiếm bị *trễ*, không bao giờ sai.
 
 ## Online: Luồng dữ liệu theo request
 
@@ -73,6 +99,9 @@ Toàn bộ vòng đời này chạy qua `scripts/crawl.py` rồi `scripts/ingest
 | `data/raw/crawled/` | Dữ liệu thô từ crawler theo từng nguồn | JSON | Gitignored | `scripts/crawl.py` | `scripts/ingest.py` |
 | `data/processed/` | Dữ liệu đã làm sạch, chuẩn hóa, chia chunk | JSON | Gitignored | `src/ingestion/data_cleaner.py`, `chunker.py` | `src/embedding/product_embedder.py` |
 | Postgres (container `postgres`) | Vector sản phẩm + document + metadata JSONB (bảng `products`) | Cột pgvector `vector(1536)` + chỉ mục HNSW | N/A (dịch vụ ngoài, volume `pgdata`) | `src/embedding/vector_store.py` | `src/retrieval/product_retriever.py` |
+| Postgres (container `postgres`) | Row sản phẩm source-of-truth (bảng `product_catalog`, `REPLICA IDENTITY FULL`) | Cột SQL + JSONB (specs, pros, cons, tags) | N/A (volume `pgdata`) | `src/catalog/product_repository.py` (API CRUD, ingest) | Debezium (WAL), `api/routes/products.py` |
+| Elasticsearch (container `elasticsearch`) | Chunk document keyword (index `product_chunks`) | Text + trường keyword/số, BM25 | N/A (volume `esdata`) | `src/sync/indexer_worker.py`, ingest bootstrap | `src/retrieval/es_keyword_search.py` |
+| Kafka (container `kafka`) | Sự kiện thay đổi sản phẩm (`ragshop.public.product_catalog`) | Debezium JSON | N/A (volume `kafkadata`) | Debezium connector | Cả hai sync worker |
 | Redis (container `redis`) | Entry cache, khóa bằng hash MD5 của tham số gọi (`SimpleCache.make_key`) | Key → giá trị đã serialize | N/A (dịch vụ ngoài) | Dự kiến cho `src/utils/cache.py` — **hiện chưa được dùng**; `SimpleCache` chỉ giữ dict trong bộ nhớ bất kể `backend` | — |
 
 ## Lưu ý về độ nhạy cảm dữ liệu

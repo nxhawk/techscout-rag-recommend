@@ -12,9 +12,11 @@ rag-product-recommend/
 ├── src/                        # Core business logic
 │   ├── crawler/                # Web crawling (raw data collection)
 │   │   └── spiders/            #   One spider per source (tgdd, cellphones)
+│   ├── catalog/                # Source-of-truth product table (CRUD)
 │   ├── ingestion/              # Data loading & normalization
 │   ├── embedding/              # Embedding & Vector DB
 │   ├── retrieval/              # Product retrieval & search
+│   ├── sync/                   # CDC sync workers (Debezium → ES/pgvector)
 │   ├── generation/             # LLM generation & prompts
 │   ├── pipeline/               # Orchestration layer
 │   │   ├── recommend/          #   Recommendation domain logic
@@ -82,6 +84,14 @@ All domain logic lives here. This is a pure Python package with no web framework
 
 **When to add a new file:** When crawling a new source — add `<name>_spider.py` and a `SourceConfig` block in `configs/crawler.yaml`.
 
+### `src/catalog/` — Source of Truth (Product Catalog)
+
+**Purpose:** CRUD access to the `product_catalog` table — the single source of truth that CDC captures. Search indexes are derived from it and must never be written by API handlers.
+
+| File | Purpose | When to add/update |
+| ---- | ------- | ------------------- |
+| `product_repository.py` | `ProductRepository` — create/upsert/update/delete/get/list on `product_catalog` (parameterized SQL, `REPLICA IDENTITY FULL` for Debezium before-images) | When adding a product field (also update `api/schemas.py` and the chunker) |
+
 ### `src/ingestion/` — Data Loading & Normalization
 
 **Purpose:** Load raw product data from various sources, clean it, parse specifications, and chunk it into units suitable for embedding.
@@ -116,12 +126,25 @@ All domain logic lives here. This is a pure Python package with no web framework
 | File | Purpose | When to add/update |
 | ---- | ------- | ------------------- |
 | `product_retriever.py` | Main retriever — combines filter extraction, embedding, vector query, and scoring into one flow | When changing the retrieval pipeline order or adding a new retrieval step |
-| `hybrid_search.py` | Combine semantic search + keyword search (BM25) + metadata filters | When implementing BM25, adding a new search strategy, or changing fusion weights |
+| `hybrid_search.py` | Fuse semantic + keyword branches with RRF; supports pre-filtering backends (ES) and the post-filtering in-memory BM25 fallback | When adding a new search strategy or changing fusion behavior |
+| `es_keyword_search.py` | Elasticsearch keyword backend — BM25 with `bool.filter` pre-filtering, chunk upsert/delete for the sync workers | When changing the ES mapping, query shape, or filter pushdown |
 | `filter_engine.py` | Extract structured filters (price, brand, category, rating) from Vietnamese natural language queries | When supporting a new filter type (e.g., color, storage size) or adding new keyword patterns |
 | `similarity_scorer.py` | Compute composite relevance score from semantic similarity + metadata signals | When changing scoring weights or adding new scoring dimensions |
 | `reranker.py` | Cross-encoder reranking using `ms-marco-MiniLM-L-6-v2` for more accurate relevance scoring | When switching reranker model or adding reranking strategies (e.g., LLM-based reranking) |
 
 **When to add a new file:** When adding a new search strategy (e.g., `bm25_search.py`), a new filter type that's complex enough to warrant its own module, or a new scoring algorithm.
+
+### `src/sync/` — CDC Sync Workers
+
+**Purpose:** Consume the Debezium change stream (Kafka) and keep the derived search indexes in sync with the catalog. See [Hybrid Retrieval](hybrid-retrieval.md#cdc-architecture-how-the-indexes-stay-fresh).
+
+| File | Purpose | When to add/update |
+| ---- | ------- | ------------------- |
+| `events.py` | Parse Debezium messages into `ChangeEvent`; `TEXT_FIELDS` / `content_hash` / `text_changed` decide when re-embedding is needed | When adding a product field (decide: text-bearing or metadata-only) |
+| `chunk_builder.py` | Catalog row → chunk payload (ids, documents, metadatas incl. `content_hash`), shared with ingest | When changing chunk shape |
+| `indexer_worker.py` | `SearchIndexer` — idempotent upsert/delete of product chunks in Elasticsearch | When changing keyword indexing behavior |
+| `embedding_worker.py` | `EmbeddingSyncer` — re-embed on text change, metadata-only update for price/rating, delete on `d` | When changing the re-embed decision or vector upsert flow |
+| `runner.py` | Kafka consumer loop — at-least-once, commit after apply | When changing delivery semantics or error handling |
 
 ### `src/generation/` — LLM Generation
 
@@ -205,6 +228,7 @@ All domain logic lives here. This is a pure Python package with no web framework
 | `recommend.py` | `POST /api/recommend` handler | When changing recommendation request/response format |
 | `compare.py` | `POST /api/compare` handler | When changing comparison request/response format |
 | `search.py` | `POST /api/search` handler | When adding search features or filters |
+| `products.py` | `POST/PUT/DELETE/GET /api/products` — CRUD on the source-of-truth catalog (CDC propagates to the indexes) | When changing the product write contract |
 
 **`api/middleware/`** — Request/response middleware.
 
@@ -254,6 +278,7 @@ All domain logic lives here. This is a pure Python package with no web framework
 | `crawl.py` | Crawl raw product data into `data/raw/crawled/` (`--source`, `--category`, `--all`) | When changing crawl CLI options or adding a source |
 | `ingest.py` | Full ingestion pipeline: load → clean → chunk → embed → store in Postgres (pgvector) | When changing the ingestion flow or adding new data sources |
 | `seed.py` | Generate sample product data for development/testing | When adding new product categories or changing sample data schema |
+| `sync_worker.py` | Run a CDC sync worker (`--role indexer` → Elasticsearch, `--role embedder` → pgvector) | When adding a new derived index or changing worker wiring |
 
 **When to add a new file:** When you need a new CLI task (e.g., `migrate.py` for vector store migrations, `export.py` for data export).
 
@@ -297,7 +322,8 @@ All domain logic lives here. This is a pure Python package with no web framework
 | File | Purpose | When to add/update |
 | ---- | ------- | ------------------- |
 | `Dockerfile` | Multi-stage build using uv — installs deps, copies source, runs uvicorn | When changing base image, Python version, or build steps |
-| `docker-compose.yml` | Local dev stack: app + Redis | When adding new services (e.g., Qdrant, PostgreSQL) or changing ports/volumes |
+| `docker-compose.yml` | Full CDC stack: app, Postgres (wal_level=logical), Elasticsearch, Kafka (KRaft), Debezium Connect + connect-init, both sync workers, Redis | When adding new services or changing ports/volumes |
+| `debezium/product-catalog-connector.json` | Debezium Postgres connector config (registered idempotently by `connect-init`) | When changing the captured table, topic prefix, or snapshot mode |
 
 ---
 

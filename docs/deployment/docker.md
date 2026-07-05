@@ -23,13 +23,23 @@ cd docker
 docker compose up --build
 ```
 
-This starts three containers:
+This starts the full CDC stack:
 
 | Service | Port | Description |
 | ------- | ---- | ----------- |
-| **app** | `8000` | FastAPI server |
-| **postgres** | `5432` | Postgres + pgvector (vector store) |
+| **app** | `8000` | FastAPI server (keyword backend: Elasticsearch) |
+| **postgres** | `5432` | Postgres + pgvector — catalog (source of truth) + vectors; `wal_level=logical` for CDC |
+| **elasticsearch** | `9200` | Keyword/BM25 index (`product_chunks`) |
+| **kafka** | — | Event stream (single-node KRaft) |
+| **connect** | `8083` | Debezium (Kafka Connect) — captures `product_catalog` changes |
+| **connect-init** | — | One-shot: registers the Debezium connector (`docker/debezium/`), then exits |
+| **indexer-worker** | — | CDC consumer → Elasticsearch |
+| **embedding-worker** | — | CDC consumer → pgvector (re-embeds only on text changes) |
 | **redis** | `6379` | Redis cache |
+
+Product create/update/delete via `POST/PUT/DELETE /api/products` propagates
+to both search indexes automatically (see
+[Hybrid Retrieval](../architecture/hybrid-retrieval.md#cdc-architecture-how-the-indexes-stay-fresh)).
 
 The API is available at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
 
@@ -192,6 +202,7 @@ The container does not auto-ingest data. You need to run ingestion manually:
 # If running with docker compose
 docker compose exec app uv run python scripts/seed.py
 docker compose exec app uv run python scripts/ingest.py
+# or: ingest.py --catalog-only  (let the CDC workers build the indexes)
 
 # If running standalone container
 docker exec rag-api uv run python scripts/seed.py

@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from api.routes.recommend import router as recommend_router
 from api.routes.compare import router as compare_router
 from api.routes.search import router as search_router
+from api.routes.products import router as products_router
 
 # Configure application logging (uvicorn only configures its own loggers).
 # Short timestamps and one line per event keep the console readable.
@@ -41,6 +42,7 @@ app = FastAPI(
 app.include_router(recommend_router, prefix="/api", tags=["Recommend"])
 app.include_router(compare_router, prefix="/api", tags=["Compare"])
 app.include_router(search_router, prefix="/api", tags=["Search"])
+app.include_router(products_router, prefix="/api", tags=["Products"])
 
 
 @app.get("/health")

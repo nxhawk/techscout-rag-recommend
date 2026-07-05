@@ -3,8 +3,10 @@
 The recommend flow (`POST /api/recommend`) retrieves candidates with a **hybrid
 strategy**: dense semantic search (pgvector) fused with sparse keyword search
 (BM25) via Reciprocal Rank Fusion, optionally followed by **cross-encoder
-reranking**. This page explains each technique and exactly where it runs in the
-code.
+reranking**. In production the keyword branch is served by **Elasticsearch**,
+kept fresh through CDC (Debezium + Kafka); an in-memory BM25 snapshot remains
+as an automatic fallback for development. This page explains each technique
+and exactly where it runs in the code.
 
 ## End-to-end flow
 
@@ -20,13 +22,12 @@ flowchart TB
     end
 
     subgraph Sparse["Sparse branch — keyword"]
-        Q --> BM25["BM25Index.search()<br/><i>src/retrieval/keyword_search.py</i>"]
-        FE -->|"post-filter: same filters,<br/>re-applied in Python"| PF["HybridSearch._matches_filters()"]
-        BM25 --> PF
+        Q --> KW["ESKeywordSearch.search() — production<br/>BM25Index.search() — fallback<br/><i>src/retrieval/es_keyword_search.py</i>"]
+        FE -->|"ES: pre-filter (bool.filter)<br/>memory: post-filter (Python)"| KW
     end
 
     SS --> RRF["Reciprocal Rank Fusion<br/>HybridSearch._rrf_merge()<br/><i>src/retrieval/hybrid_search.py</i>"]
-    PF --> RRF
+    KW --> RRF
 
     RRF --> RER{"use_reranker?"}
     RER -->|yes| CE["CrossEncoderReranker.rerank()<br/>ms-marco-MiniLM-L-6-v2<br/><i>src/retrieval/reranker.py</i>"]
@@ -47,63 +48,56 @@ candidates. Relevance is `1 - cosine_distance`, refined by `SimilarityScorer`.
 
 Dense retrieval can miss **exact-term** matches: model numbers ("A55",
 "14 Pro"), spec tokens ("120Hz", "5000mAh"), or rare Vietnamese terms the
-embedding model underweights. BM25 (Okapi) fills that gap.
+embedding model underweights. BM25 (Okapi) fills that gap. Two backends
+implement it (`keyword_backend` in `configs/settings.yaml`):
 
-Implementation (`src/retrieval/keyword_search.py`):
+### Elasticsearch (production, `keyword_backend: elasticsearch`)
 
-- **Index** — pure-Python, in-memory, built once at API startup from
-  `VectorStore.list_documents()` (the exact same corpus the dense branch
-  searches). No extra dependency; the product-chunk corpus is small enough
-  that a rebuild takes milliseconds.
-- **Tokenization** — lowercase + Unicode `\w+`, so Vietnamese diacritics are
-  preserved ("trâu" ≠ "trau").
-- **Scoring** — standard Okapi BM25 with `k1 = 1.5`, `b = 0.75` and the
-  smoothed IDF `log(1 + (N - df + 0.5) / (df + 0.5))` (always non-negative):
+`src/retrieval/es_keyword_search.py`. One shared index (`product_chunks`,
+one document per chunk, id `{product_id}_{chunk_type}`), kept fresh by the
+CDC sync workers — no startup snapshot, no per-worker RAM, no staleness.
+The extracted filters are pushed into the query itself as `bool.filter`
+clauses (term `brand`/`category`, range `price`/`avg_rating`), so the keyword
+branch **pre-filters** exactly like the SQL branch. Standard tokenizer +
+lowercase keeps Vietnamese diacritics intact ("trâu" ≠ "trau").
+
+If Elasticsearch is unreachable at startup, `get_searcher()` falls back to
+the in-memory backend; if a query fails mid-flight, that request degrades to
+semantic-only. The API never breaks because of the keyword branch.
+
+### In-memory snapshot (fallback, `keyword_backend: memory`)
+
+`src/retrieval/keyword_search.py`. Pure-Python Okapi BM25 (`k1 = 1.5`,
+`b = 0.75`, smoothed IDF `log(1 + (N - df + 0.5) / (df + 0.5))`), built once
+at API startup from `VectorStore.list_documents()`:
 
 ```text
 score(q, d) = Σ_t∈q  IDF(t) · tf(t,d)·(k1+1) / ( tf(t,d) + k1·(1 - b + b·|d|/avgdl) )
 ```
 
-- **Filter parity** — the same filters the dense branch pushes to SQL are
-  re-applied in Python (`HybridSearch._matches_filters`) to every BM25 hit,
-  so the keyword branch cannot leak over-budget or wrong-brand products into
-  the LLM context.
+Filters are re-applied in Python (`HybridSearch._matches_filters`) to every
+hit — a **post-filter**. Fine for development and small static corpora;
+its trade-offs (stale snapshot, per-worker copies) are why production uses
+Elasticsearch.
 
 ## Where filtering happens: pre-filter vs post-filter
 
-Both branches enforce the **same** filter set from
-`FilterEngine.extract_filters()` (brand, category, price range, min rating),
-but at *opposite* points in their pipelines:
+All branches enforce the **same** filter set from
+`FilterEngine.extract_filters()` (brand, category, price range, min rating):
 
-| | Dense (semantic) | Sparse (BM25) |
+| Branch | Strategy | Where |
 |---|---|---|
-| Strategy | **Pre-filter** | **Post-filter** |
-| Where | SQL `WHERE` inside the pgvector query (`ProductRetriever._build_where_clause()`) | Python, after search (`HybridSearch._matches_filters()`) |
-| What is searched | Only rows that already satisfy the filters | The **entire** in-memory index |
-| Result count | Always up to `top_k × 2` (if enough rows match) | `keyword_candidates` (50) hits **minus** whatever the filter rejects |
+| Dense (pgvector) | **Pre-filter** | SQL `WHERE` inside the vector query (`ProductRetriever._build_where_clause()`) |
+| Keyword — Elasticsearch | **Pre-filter** | `bool.filter` inside the ES query (`es_keyword_search.build_bool_query()`) |
+| Keyword — in-memory fallback | **Post-filter** | Python, after search (`HybridSearch._matches_filters()`) |
 
-- **Dense = filter first, then search.** The filters become SQL `WHERE`
-  conditions in the *same* query that runs the cosine search, so Postgres only
-  ranks rows that already satisfy category/price/brand/rating. Non-matching
-  products are never candidates.
-- **Sparse = search first, then filter.** `BM25Index` is a plain in-memory
-  index with no metadata awareness: `BM25Index.search()` scores the whole
-  corpus, returns the top `keyword_candidates` (50) hits, and only *then*
-  does `_matches_filters()` drop hits with the wrong category, a price outside
-  `price_min`/`price_max`, etc.
-
-!!! tip "BM25 never touches the database"
-    The sparse branch executes **no SQL at query time**. `BM25Index` holds an
-    in-memory snapshot taken from `VectorStore.list_documents()` at startup —
-    which is also why its filters must be re-applied in Python rather than
-    pushed down as `WHERE` conditions.
-
-One practical consequence of post-filtering: if most of the 50 BM25 candidates
-fail the filters (e.g. a tight budget), the keyword branch may contribute few
-or zero results — it does **not** go back for more. The fused output then
-leans on the dense branch, which always fills its quota from the database.
-The end guarantee is identical on both paths, though: no product violating
-the extracted filters can reach RRF or the LLM context.
+Pre-filtering means only rows/documents that already satisfy the constraints
+are ranked — the branch always fills its candidate quota when matching data
+exists. The post-filtering fallback searches its whole snapshot first and
+drops non-matching hits after, so a tight budget can leave it with few or
+zero candidates (it does not go back for more). The end guarantee is
+identical everywhere: no product violating the extracted filters can reach
+RRF or the LLM context.
 
 ## Fusion: Reciprocal Rank Fusion (RRF)
 
@@ -119,6 +113,54 @@ of top ranks). A document found by **both** branches accumulates two terms and
 rises above single-branch hits — exact-match products get boosted without any
 score calibration. Implemented in `HybridSearch._rrf_merge()`; results carry
 `rrf_score`, plus `bm25_score` when the keyword branch found them.
+
+## CDC architecture: how the indexes stay fresh
+
+The catalog table `product_catalog` (Postgres) is the **source of truth**:
+the CRUD API (`/api/products`) writes only there. Debezium streams row
+changes from the WAL into Kafka, and two workers consume that **single
+ordered stream** to update both derived indexes:
+
+```mermaid
+flowchart TB
+    PDB[("product_catalog — source of truth<br/>PostgreSQL, wal_level=logical")]
+    PDB -->|"S1 — Debezium (pgoutput)<br/>connector: docker/debezium/"| BUS["Kafka topic<br/>ragshop.public.product_catalog"]
+
+    subgraph Workers["scripts/sync_worker.py"]
+        BUS --> IDX["--role indexer<br/>S2 — SearchIndexer<br/><i>src/sync/indexer_worker.py</i>"]
+        BUS --> EMBW["--role embedder<br/>S3 — EmbeddingSyncer<br/><i>src/sync/embedding_worker.py</i>"]
+    end
+
+    IDX --> ES[("Elasticsearch<br/>product_chunks")]
+    EMBW --> PGV[("Postgres + pgvector<br/>products")]
+```
+
+- **S1 — one stream.** Both workers read the same topic, so the two indexes
+  apply changes in the same order — they can lag, but never diverge.
+  `REPLICA IDENTITY FULL` on the table gives Debezium full before-images.
+- **S2 — idempotent indexer.** Chunk ids are deterministic
+  (`{product_id}_{chunk_type}`); every apply is delete-then-upsert, so
+  replays (snapshot restarts, rebalances) converge. Offsets are committed
+  only after a successful apply (at-least-once).
+- **S3 — cheap metadata path.** The embedding worker re-embeds **only when a
+  text-bearing field changed** (name, brand, category, description, specs,
+  pros/cons, review summary — see `TEXT_FIELDS` in `src/sync/events.py`).
+  Price/rating changes flow as a metadata-only JSONB update: zero embedding
+  API calls. A `content_hash` stored in chunk metadata lets snapshot replays
+  skip re-embedding entirely.
+
+### Runbook
+
+```bash
+cd docker && docker compose up --build        # full stack, connector auto-registered
+uv run python scripts/ingest.py               # bootstrap: catalog + both indexes
+uv run python scripts/ingest.py --catalog-only  # alt: let CDC build the indexes
+```
+
+After bootstrap, all writes go through the CRUD API (`POST/PUT/DELETE
+/api/products`) and propagate automatically within seconds. Monitor consumer
+lag on group ids `rag-sync-indexer` / `rag-sync-embedder`; lag means stale
+search results, never wrong ones.
 
 ## Cross-encoder reranking (optional)
 
@@ -142,23 +184,30 @@ Settings (`configs/settings.yaml` → `PipelineConfig`):
 
 | Key | Default | Meaning |
 |---|---|---|
-| `use_bm25` | `true` | Wrap `ProductRetriever` in `HybridSearch` (BM25 + RRF) |
+| `use_bm25` | `true` | Wrap `ProductRetriever` in `HybridSearch` (keyword + RRF) |
+| `keyword_backend` | `elasticsearch` | `elasticsearch` (CDC-synced) or `memory` (snapshot) |
+| `es_url` | `http://localhost:9200` | Overridden by `ELASTICSEARCH_URL` |
+| `es_index` | `product_chunks` | Keyword index name |
+| `kafka_bootstrap` | `localhost:9092` | Overridden by `KAFKA_BOOTSTRAP_SERVERS` |
+| `products_topic` | `ragshop.public.product_catalog` | Debezium topic the workers consume |
+| `catalog_table` | `product_catalog` | Source-of-truth table (CDC-captured) |
 | `rrf_k` | `60` | RRF smoothing constant |
-| `keyword_candidates` | `50` | Max BM25 hits considered before fusion |
+| `keyword_candidates` | `50` | Max keyword hits considered before fusion |
 | `use_reranker` | `false` | Enable cross-encoder reranking |
 | `reranker_model` | `ms-marco-MiniLM-L-6-v2` | Cross-encoder checkpoint |
 
 Wiring lives in `api/deps.py`:
 
 ```
-get_searcher()  → HybridSearch(ProductRetriever)   # BM25 index built at startup
-get_reranker()  → CrossEncoderReranker | None      # None if disabled/missing dep
-get_recommend_pipeline() → RecommendEngine(retriever=searcher, reranker=...)
+get_keyword_backend() → ESKeywordSearch | None    # None: ES off/unreachable
+get_searcher()        → HybridSearch(ProductRetriever)
+                        # keyword: ES → in-memory BM25 → semantic-only
+get_reranker()        → CrossEncoderReranker | None
+get_cached_product_repository() → ProductRepository  # CRUD (source of truth)
 ```
 
-Both features **degrade gracefully**: if the BM25 index build fails (e.g. empty
-vector store), the flow falls back to semantic-only retrieval; if
-`sentence-transformers` is not installed, the reranker is skipped with a warning.
+Everything **degrades gracefully**: no Elasticsearch → in-memory BM25; empty
+vector store → semantic-only; no `sentence-transformers` → reranker skipped.
 
 To enable reranking:
 
@@ -172,5 +221,7 @@ uv add sentence-transformers
     `ProductRetriever` — hybrid retrieval currently applies to recommend only.
 
 **Tests:** `tests/unit/test_hybrid_search.py` covers BM25 ranking, Vietnamese
-tokenization, RRF boosting, filter parity on the keyword branch, and the
-reranker → sigmoid relevance path.
+tokenization, RRF boosting and filter parity; `tests/unit/test_es_keyword_search.py`
+covers ES query building and the pre-filter wiring; `tests/unit/test_sync_events.py`
+and `tests/unit/test_sync_workers.py` cover CDC event parsing and both workers
+(re-embed vs metadata-only vs delete, snapshot idempotency).

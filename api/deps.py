@@ -1,14 +1,17 @@
 """Dependencies - FastAPI dependency injection."""
 
 import logging
+import os
 import re
 import time
 from functools import lru_cache
 from src.utils.helpers import resolve_api_keys
+from src.catalog.product_repository import ProductRepository
 from src.pipeline.config import PipelineConfig
 from src.embedding.product_embedder import ProductEmbedder
 from src.embedding.vector_store import VectorStore
 from src.retrieval.product_retriever import ProductRetriever
+from src.retrieval.es_keyword_search import ESKeywordSearch
 from src.retrieval.filter_engine import FilterEngine
 from src.retrieval.hybrid_search import HybridSearch
 from src.retrieval.reranker import CrossEncoderReranker
@@ -93,23 +96,55 @@ def get_retriever(config: PipelineConfig | None = None) -> ProductRetriever:
     )
 
 
+def get_keyword_backend(config: PipelineConfig | None = None) -> ESKeywordSearch | None:
+    """Create the Elasticsearch keyword backend if configured and reachable.
+
+    Returns None when ``keyword_backend`` is not "elasticsearch" or the
+    cluster is down, so callers can fall back to the in-memory BM25 snapshot.
+    """
+    cfg = config or get_config()
+    backend_name = (os.getenv("KEYWORD_BACKEND") or cfg.keyword_backend).lower()
+    if backend_name != "elasticsearch":
+        return None
+    url = os.getenv("ELASTICSEARCH_URL") or cfg.es_url
+    backend = ESKeywordSearch(url=url, index_name=cfg.es_index)
+    try:
+        backend.setup()
+    except Exception as exc:
+        logger.warning(
+            "Elasticsearch unavailable at %s (%s) - falling back to in-memory BM25",
+            url, exc,
+        )
+        return None
+    logger.info("Keyword backend: Elasticsearch at %s (index=%s)", url, cfg.es_index)
+    return backend
+
+
 def get_searcher(config: PipelineConfig | None = None) -> ProductRetriever | HybridSearch:
     """Create the retrieval component for the recommend flow.
 
     With ``use_bm25`` enabled, wraps the ProductRetriever in HybridSearch
-    (semantic + BM25 fused with RRF). The BM25 index is built once at startup
-    from the vector store; if that fails (e.g. empty store), the plain
-    semantic retriever is used so the API still works.
+    (semantic + keyword fused with RRF). Keyword backend preference:
+
+    1. Elasticsearch (``keyword_backend: elasticsearch``) - CDC-synced,
+       filters pre-applied in the query, shared across API workers.
+    2. In-memory BM25 snapshot - built once at startup from the vector store.
+    3. Semantic-only - if the snapshot build fails too (e.g. empty store).
     """
     cfg = config or get_config()
     retriever = get_retriever(cfg)
     if not cfg.use_bm25:
         return retriever
+
+    es_backend = get_keyword_backend(cfg)
     searcher = HybridSearch(
         retriever,
+        bm25_index=es_backend,  # None -> HybridSearch creates a BM25Index
         rrf_k=cfg.rrf_k,
         keyword_candidates=cfg.keyword_candidates,
     )
+    if es_backend is not None:
+        return searcher
     try:
         searcher.setup()
     except Exception as exc:
@@ -119,6 +154,21 @@ def get_searcher(config: PipelineConfig | None = None) -> ProductRetriever | Hyb
         )
         return retriever
     return searcher
+
+
+@lru_cache()
+def get_cached_product_repository() -> ProductRepository:
+    """Cached repository for the product CRUD routes (source of truth).
+
+    CRUD writes go ONLY to the ``product_catalog`` table; Debezium (CDC)
+    propagates changes to Elasticsearch and pgvector via the sync workers.
+    """
+    cfg = get_config()
+    repo = ProductRepository(table_name=cfg.catalog_table)
+    dsn = os.getenv("DATABASE_URL") or cfg.vector_db_url
+    repo.setup(dsn=dsn)
+    logger.info("Product repository ready (table=%s)", cfg.catalog_table)
+    return repo
 
 
 def get_reranker(config: PipelineConfig | None = None) -> CrossEncoderReranker | None:

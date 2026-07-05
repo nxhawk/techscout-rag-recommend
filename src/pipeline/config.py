@@ -36,6 +36,19 @@ class PipelineConfig:
     use_reranker: bool = False
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
+    # Keyword backend: "memory" (in-memory BM25 snapshot) or "elasticsearch"
+    # (CDC-synced index, pre-filtered). Env overrides: KEYWORD_BACKEND,
+    # ELASTICSEARCH_URL.
+    keyword_backend: str = "memory"
+    es_url: str = "http://localhost:9200"
+    es_index: str = "product_chunks"
+
+    # CDC sync (Debezium -> Kafka -> workers). Env overrides:
+    # KAFKA_BOOTSTRAP_SERVERS.
+    kafka_bootstrap: str = "localhost:9092"
+    products_topic: str = "ragshop.public.product_catalog"
+    catalog_table: str = "product_catalog"
+
     @classmethod
     def from_yaml(cls, filepath: str) -> "PipelineConfig":
         with open(filepath, "r") as f:

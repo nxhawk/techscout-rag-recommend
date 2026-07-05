@@ -217,3 +217,74 @@ Search products by query with optional filters.
   "total": 1
 }
 ```
+
+## Manage Products (CRUD)
+
+The catalog is the **source of truth**: these endpoints write only to the
+`product_catalog` table. Debezium (CDC) picks the change up from the WAL and
+the sync workers propagate it to Elasticsearch and pgvector automatically —
+usually within a few seconds (eventual consistency).
+
+### Create
+
+```
+POST /api/products            → 201
+```
+
+| Field | Type | Required | Description |
+| ----- | ---- | -------- | ----------- |
+| `product_id` | string | No | Generated from `name` when omitted |
+| `name` | string | Yes | Product name |
+| `brand`, `category`, `description`, `review_summary`, `currency` | string | No | Text fields |
+| `price` | int ≥ 0 | No | Price in VND |
+| `specifications` | object | No | Spec key/values |
+| `pros`, `cons`, `tags` | string[] | No | Lists |
+| `avg_rating` | float 0–5 | No | Average rating |
+| `review_count` | int ≥ 0 | No | Number of reviews |
+
+```bash
+curl -X POST http://localhost:8000/api/products \
+  -H "Content-Type: application/json" \
+  -d '{"product_id": "xiaomi-15", "name": "Xiaomi 15", "brand": "Xiaomi",
+       "category": "smartphone", "price": 18990000,
+       "description": "Snapdragon 8 Elite, camera Leica."}'
+```
+
+**Response:** `{"product_id": "xiaomi-15", "message": "Đã tạo sản phẩm. Dữ liệu tìm kiếm sẽ được đồng bộ trong giây lát."}`
+
+`409` if the id already exists.
+
+### Update (partial)
+
+```
+PUT /api/products/{product_id}
+```
+
+Send only the fields to change. A price/rating-only change is propagated as
+a cheap metadata update (no re-embedding); text changes trigger re-embedding
+of the product's chunks.
+
+```bash
+curl -X PUT http://localhost:8000/api/products/xiaomi-15 \
+  -H "Content-Type: application/json" -d '{"price": 17490000}'
+```
+
+`404` if the product does not exist; `422` if the body is empty.
+
+### Delete
+
+```
+DELETE /api/products/{product_id}
+```
+
+Removes the product from the catalog; CDC removes it from both search
+indexes. `404` if it does not exist.
+
+### Read
+
+```
+GET /api/products/{product_id}
+GET /api/products?limit=50&offset=0
+```
+
+Read the catalog directly (always strongly consistent — no index lag).

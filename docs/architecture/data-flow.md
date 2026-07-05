@@ -2,7 +2,7 @@
 
 This page tracks the system from a **data** perspective — what shape the data takes at each stage, where it's stored, and how it moves between components. For the control flow / algorithm steps, see [Pipeline Flow](pipeline-flow.md); for the static structure of runnable units, see [C4 Model](c4-model.md).
 
-There are two independent data lifecycles: an **offline** batch lifecycle that populates the vector store, and an **online** per-request lifecycle that answers a user query.
+There are three data lifecycles: an **offline** batch lifecycle that bootstraps the catalog and both search indexes, a **continuous** CDC lifecycle that propagates every catalog write to the indexes, and an **online** per-request lifecycle that answers a user query.
 
 ```mermaid
 flowchart LR
@@ -27,7 +27,18 @@ flowchart LR
         O -->|"parse"| P["structured JSON\n(Vietnamese explanation)"]
     end
 
+    subgraph CDC["Catalog write lifecycle (continuous, CDC)"]
+        direction TB
+        W["CRUD request\nPOST/PUT/DELETE /api/products"] -->|"SQL write"| G[("product_catalog\nsource of truth")]
+        G -->|"WAL → Debezium"| H["change event\n(op, before, after)"]
+        H -->|"Kafka topic"| W1["indexer worker\n→ chunk docs"]
+        H -->|"Kafka topic"| W2["embedding worker\n→ vectors or\nmetadata-only"]
+        W1 --> ES[("Elasticsearch\nproduct_chunks")]
+        W2 --> F
+    end
+
     F -.->|"vector + metadata\nsearch"| L
+    ES -.->|"BM25 keyword\nsearch"| L
 ```
 
 ## Offline: Ingestion Data Flow
@@ -42,7 +53,22 @@ flowchart LR
 | Embed | Chunk text | Dense vector | `list[float]`, 1536-dim (`text-embedding-3-small`) | — | `src/embedding/product_embedder.py` |
 | Store | Vectors + documents + metadata | Indexed table | Postgres table with pgvector column (HNSW, cosine similarity) | Postgres (`pgdata` volume) | `src/embedding/vector_store.py` |
 
-This whole lifecycle runs via `scripts/crawl.py` then `scripts/ingest.py` — never automatically triggered by an API request.
+This whole lifecycle runs via `scripts/crawl.py` then `scripts/ingest.py` — never automatically triggered by an API request. `ingest.py` also upserts the cleaned profiles into `product_catalog` (source of truth) and bulk-indexes the chunks into Elasticsearch; with `--catalog-only` it writes just the catalog and lets the CDC workers build both indexes from the Debezium snapshot.
+
+## Continuous: Product Write Data Flow (CDC)
+
+Every write to the catalog (CRUD API or ingest) flows through one ordered pipeline to both search indexes:
+
+| Stage | Input | Output | Format | Source |
+| ----- | ----- | ------ | ------ | ------ |
+| CRUD write | HTTP request (`/api/products`) | Row in `product_catalog` | SQL (parameterized) | `api/routes/products.py`, `src/catalog/product_repository.py` |
+| Capture | WAL (logical decoding) | Debezium change event | JSON: `op` (c/u/d/r), `before`, `after` | Debezium connector (`docker/debezium/`) |
+| Transport | Change event | Kafka record | Topic `ragshop.public.product_catalog` | Kafka |
+| Parse | Kafka record | `ChangeEvent` | Dataclass (JSONB fields decoded) | `src/sync/events.py` |
+| Index (keyword) | `ChangeEvent` | Upserted/deleted chunk docs | ES docs, id `{product_id}_{chunk_type}` | `src/sync/indexer_worker.py` |
+| Index (semantic) | `ChangeEvent` | Re-embedded chunks **or** metadata-only JSONB update | pgvector rows; embedding call only when a text field changed (`content_hash`) | `src/sync/embedding_worker.py` |
+
+Delivery is at-least-once (offsets committed after apply) and both appliers are idempotent, so replays converge. Lag makes search results *stale*, never wrong.
 
 ## Online: Per-Request Data Flow
 
@@ -73,6 +99,9 @@ This whole lifecycle runs via `scripts/crawl.py` then `scripts/ingest.py` — ne
 | `data/raw/crawled/` | Raw crawler output per source | JSON | Gitignored | `scripts/crawl.py` | `scripts/ingest.py` |
 | `data/processed/` | Cleaned, normalized, chunked data | JSON | Gitignored | `src/ingestion/data_cleaner.py`, `chunker.py` | `src/embedding/product_embedder.py` |
 | Postgres (`postgres` container) | Product vectors + documents + JSONB metadata (`products` table) | pgvector `vector(1536)` column + HNSW index | N/A (external service, `pgdata` volume) | `src/embedding/vector_store.py` | `src/retrieval/product_retriever.py` |
+| Postgres (`postgres` container) | Source-of-truth product rows (`product_catalog` table, `REPLICA IDENTITY FULL`) | SQL columns + JSONB (specs, pros, cons, tags) | N/A (`pgdata` volume) | `src/catalog/product_repository.py` (CRUD API, ingest) | Debezium (WAL), `api/routes/products.py` |
+| Elasticsearch (`elasticsearch` container) | Keyword chunk documents (`product_chunks` index) | Text + keyword/numeric fields, BM25 | N/A (`esdata` volume) | `src/sync/indexer_worker.py`, ingest bootstrap | `src/retrieval/es_keyword_search.py` |
+| Kafka (`kafka` container) | Product change events (`ragshop.public.product_catalog`) | Debezium JSON | N/A (`kafkadata` volume) | Debezium connector | Both sync workers |
 | Redis (`redis` container) | Cache entries keyed by an MD5 hash of the call arguments (`SimpleCache.make_key`) | Key → serialized value | N/A (external service) | Intended for `src/utils/cache.py` — **currently unused**; `SimpleCache` only keeps an in-memory dict regardless of `backend` | — |
 
 ## Notes on Data Sensitivity

@@ -1,0 +1,18 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "database.hostname": "postgres",
+  "database.port": "5432",
+  "database.user": "postgres",
+  "database.password": "postgres",
+  "database.dbname": "rag_products",
+  "topic.prefix": "ragshop",
+  "table.include.list": "public.product_catalog",
+  "plugin.name": "pgoutput",
+  "publication.autocreate.mode": "filtered",
+  "snapshot.mode": "initial",
+  "tombstones.on.delete": "false",
+  "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "key.converter.schemas.enable": "false",
+  "value.converter.schemas.enable": "false"
+}

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-The system follows a standard RAG architecture with four core layers:
+The system follows a standard RAG architecture with five core layers:
 
 ## End-to-End Flow
 
@@ -17,6 +17,17 @@ flowchart TD
         SPEC --> CHUNK["Chunker\n(field-based chunks)"]
         CHUNK --> EMBED[ProductEmbedder]
         EMBED --> VDB[("Postgres + pgvector\nvectors + metadata")]
+        CLEAN -->|"upsert profiles\n(bootstrap)"| CAT
+    end
+
+    subgraph Sync["Catalog & CDC Sync (continuous)"]
+        direction TB
+        CRUD["Product CRUD API\nPOST/PUT/DELETE /api/products"] --> CAT[("product_catalog\nsource of truth")]
+        CAT -->|"WAL → Debezium"| KAFKA["Kafka topic"]
+        KAFKA --> IW["Indexer worker"]
+        IW --> ESI[("Elasticsearch\nBM25 keyword index")]
+        KAFKA --> EW["Embedding worker\n(re-embed only on\ntext change)"]
+        EW --> VDB
     end
 
     subgraph Online["Query Processing (online, per-request)"]
@@ -44,6 +55,7 @@ flowchart TD
 
     VDB -.->|vector + metadata search| RR
     VDB -.->|vector + metadata search| CR
+    ESI -.->|"BM25 keyword search\n(pre-filtered)"| RR
 ```
 
 ## End-to-End Sequence
@@ -105,11 +117,15 @@ Converts text chunks into vector embeddings using OpenAI's `text-embedding-3-sma
 
 ### 3. Retrieval (`src/retrieval/`)
 
-Given a user query, the retrieval layer extracts filters from natural language (price range, brand, category), performs hybrid search (semantic + metadata), computes composite scores (semantic similarity, price match, rating, popularity), and optionally reranks with a cross-encoder.
+Given a user query, the retrieval layer extracts filters from natural language (price range, brand, category), performs hybrid search — semantic (pgvector) fused with BM25 keyword search (Elasticsearch in production, in-memory fallback) via Reciprocal Rank Fusion, with the same filters pre-applied on both branches — computes composite scores (semantic similarity, price match, rating, popularity), and optionally reranks with a cross-encoder. See [Hybrid Retrieval](hybrid-retrieval.md).
 
 ### 4. Generation (`src/generation/`)
 
 Takes the retrieved products and user intent, fills a prompt template, and calls the LLM (Claude or GPT) to generate a structured JSON response. Includes guardrails for input validation and output safety checks.
+
+### 5. Catalog & CDC Sync (`src/catalog/`, `src/sync/`)
+
+The `product_catalog` table (Postgres) is the single source of truth. The CRUD API (`/api/products`) writes only there; Debezium captures row changes from the WAL into Kafka, and two workers (`scripts/sync_worker.py`) consume that single ordered stream to keep the derived indexes fresh: the **indexer** updates the Elasticsearch keyword index, the **embedding worker** updates pgvector — re-embedding only when text-bearing fields changed (price/rating changes are cheap metadata-only updates).
 
 ## Orchestration (`src/pipeline/`)
 
@@ -119,3 +135,4 @@ The pipeline layer ties everything together. The `RAGRouter` classifies incoming
 
 - [C4 Model](c4-model.md) — Context, Container, and Component diagrams of the system.
 - [Data Flow](data-flow.md) — data formats and storage as they move through ingestion and per-request processing.
+- [Hybrid Retrieval](hybrid-retrieval.md) — semantic + BM25 fusion, and how CDC keeps both indexes fresh.

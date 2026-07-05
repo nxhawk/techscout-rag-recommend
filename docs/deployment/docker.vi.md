@@ -23,13 +23,23 @@ cd docker
 docker compose up --build
 ```
 
-Lệnh này khởi động ba container:
+Lệnh này khởi động toàn bộ stack CDC:
 
 | Service | Port | Mô tả |
 | ------- | ---- | ----------- |
-| **app** | `8000` | FastAPI server |
-| **postgres** | `5432` | Postgres + pgvector (vector store) |
+| **app** | `8000` | FastAPI server (keyword backend: Elasticsearch) |
+| **postgres** | `5432` | Postgres + pgvector — catalog (source of truth) + vectors; `wal_level=logical` cho CDC |
+| **elasticsearch** | `9200` | Index keyword/BM25 (`product_chunks`) |
+| **kafka** | — | Event stream (KRaft single-node) |
+| **connect** | `8083` | Debezium (Kafka Connect) — bắt thay đổi bảng `product_catalog` |
+| **connect-init** | — | Chạy một lần: đăng ký Debezium connector (`docker/debezium/`) rồi thoát |
+| **indexer-worker** | — | CDC consumer → Elasticsearch |
+| **embedding-worker** | — | CDC consumer → pgvector (chỉ re-embed khi text đổi) |
 | **redis** | `6379` | Redis cache |
+
+Tạo/cập nhật/xóa sản phẩm qua `POST/PUT/DELETE /api/products` tự lan truyền
+sang cả hai index tìm kiếm (xem
+[Truy xuất lai](../architecture/hybrid-retrieval.md)).
 
 API có sẵn tại `http://localhost:8000`. Tài liệu tương tác tại `http://localhost:8000/docs`.
 

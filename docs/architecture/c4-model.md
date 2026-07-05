@@ -64,6 +64,12 @@ flowchart TB
         VDB[("Vector Store\n[Postgres + pgvector]\nvectors + metadata")]
         Redis[("Cache\n[Redis]\nembedding / LLM\nresponse cache")]
         Files[("File Storage\ndata/raw, data/processed\nJSON/CSV")]
+        Cat[("Catalog\n[Postgres, product_catalog]\nsource of truth")]
+        ES[("Keyword Index\n[Elasticsearch]\nBM25, product_chunks")]
+        Kafka[("Event Stream\n[Kafka, KRaft]\nragshop.public.product_catalog")]
+        Connect["CDC Connector\n[Debezium Connect]\nWAL → Kafka"]
+        IW["Indexer Worker\n[sync_worker.py --role indexer]"]
+        EW["Embedding Worker\n[sync_worker.py --role embedder]"]
     end
 
     Anthropic["Anthropic / OpenAI / Gemini APIs"]
@@ -79,14 +85,25 @@ flowchart TB
     Ingest -- "reads raw JSON" --> Files
     Ingest -- "embed(text)" --> Anthropic
     Ingest -- "upsert(vectors)" --> VDB
+    Ingest -- "upsert profiles\n(bootstrap)" --> Cat
+
+    API -- "CRUD\n/api/products" --> Cat
+    API -- "BM25 search\n(bool.filter pre-filter)" --> ES
+    Cat -- "WAL\n(logical decoding)" --> Connect
+    Connect -- "change events" --> Kafka
+    Kafka -- "consume" --> IW
+    Kafka -- "consume" --> EW
+    IW -- "upsert/delete\nchunks" --> ES
+    EW -- "upsert vectors /\nmetadata-only update" --> VDB
+    EW -- "embed(text)\n(only on text change)" --> Anthropic
 
     classDef person fill:#08427b,stroke:#052e56,color:#fff
     classDef container fill:#1168bd,stroke:#0b4884,color:#fff
     classDef storage fill:#438dd5,stroke:#2e6295,color:#fff
     classDef external fill:#999,stroke:#6b6b6b,color:#fff
     class User person
-    class API,Crawler,Ingest container
-    class VDB,Redis,Files storage
+    class API,Crawler,Ingest,Connect,IW,EW container
+    class VDB,Redis,Files,Cat,ES,Kafka storage
     class Anthropic,Sites external
 ```
 
@@ -100,6 +117,12 @@ flowchart TB
 | Vector Store | Postgres 16 + pgvector | Cosine-similarity search (HNSW index) over product embeddings + JSONB metadata | `postgres` service in `docker-compose.yml`, port 5432 — persisted in the `pgdata` volume; connection via `DATABASE_URL` |
 | Cache | Redis 7 | Intended cache for embeddings and LLM responses (`src/utils/cache.py`) | `redis` service in `docker-compose.yml`, port 6379. **Note:** `SimpleCache` currently only implements an in-memory dict regardless of the configured backend — the Redis wiring is provisioned but not yet consumed |
 | File Storage | Local filesystem | Raw crawled JSON, processed/cleaned data, sample product data | Mounted volume (`../data:/app/data`) |
+| Catalog | Postgres 16 (`product_catalog` table, same instance as the vector store) | Source of truth for product data; written only by the CRUD API and the ingest bootstrap; captured by CDC (`REPLICA IDENTITY FULL`, `wal_level=logical`) | `postgres` service |
+| Keyword Index | Elasticsearch 8 | BM25 keyword search over product chunks (`product_chunks` index) with `bool.filter` pre-filtering; derived from the catalog via CDC | `elasticsearch` service, port 9200, `esdata` volume |
+| Event Stream | Kafka 3.7 (KRaft, single node) | Ordered change-event stream (`ragshop.public.product_catalog`) feeding both sync workers | `kafka` service, `kafkadata` volume |
+| CDC Connector | Debezium Connect 2.7 | Streams `product_catalog` row changes from the Postgres WAL into Kafka; registered idempotently by the one-shot `connect-init` service (`docker/debezium/`) | `connect` service, port 8083 |
+| Indexer Worker | Python CLI (`scripts/sync_worker.py --role indexer`) | Consumes change events → idempotent upsert/delete of chunks in Elasticsearch | `indexer-worker` service |
+| Embedding Worker | Python CLI (`scripts/sync_worker.py --role embedder`) | Consumes change events → re-embeds into pgvector only when text changed; price/rating changes are metadata-only updates | `embedding-worker` service |
 
 ## Level 3: Component
 

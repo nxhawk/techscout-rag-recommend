@@ -16,9 +16,10 @@ class HybridSearch:
 
     - Semantic branch: ``ProductRetriever.retrieve`` (embedding + pgvector
       cosine + SQL metadata filters + SimilarityScorer).
-    - Keyword branch: in-memory :class:`BM25Index` over the same documents,
-      with the extracted filters re-applied in Python so both branches see
-      the same constraint set (e.g. budget).
+    - Keyword branch: either the in-memory :class:`BM25Index` snapshot
+      (filters re-applied in Python, post-filter) or a backend with
+      ``prefilters = True`` such as :class:`ESKeywordSearch` (filters pushed
+      into the query itself, pre-filter — same guarantee, applied earlier).
     - Fusion: Reciprocal Rank Fusion, ``score(d) = sum(1 / (rrf_k + rank))``.
       RRF is rank-based, so the incomparable score scales of cosine similarity
       and BM25 never need calibration.
@@ -37,7 +38,14 @@ class HybridSearch:
         self.keyword_candidates = keyword_candidates
 
     def setup(self) -> None:
-        """Build the BM25 index from the vector store's current documents."""
+        """Prepare the keyword backend.
+
+        In-memory BM25 builds a snapshot from the vector store; pre-filtering
+        backends (Elasticsearch) are set up by the caller and kept fresh by
+        the CDC sync workers, so there is nothing to build here.
+        """
+        if not hasattr(self.bm25, "build"):
+            return
         corpus = self.retriever.vector_store.list_documents()
         self.bm25.build(corpus["ids"], corpus["documents"], corpus["metadatas"])
         logger.info("BM25 index built over %d documents", self.bm25.size)
@@ -47,21 +55,36 @@ class HybridSearch:
         return self.search(query, top_k=top_k)
 
     def search(self, query: str, top_k: int = 10) -> list[dict]:
-        """Hybrid retrieval: semantic + BM25, fused with RRF."""
+        """Hybrid retrieval: semantic + keyword (BM25), fused with RRF."""
         semantic = self.retriever.retrieve(query, top_k=top_k)
+        keyword = self._keyword_search(query)
+        if not keyword:
+            return semantic
+        return self._rrf_merge(semantic, keyword)[:top_k]
+
+    def _keyword_search(self, query: str) -> list[dict]:
+        """Run the keyword branch with the same filters as the semantic one."""
+        filters = self.retriever.filter_engine.extract_filters(query)
+
+        if getattr(self.bm25, "prefilters", False):
+            # Backend applies filters inside the query (e.g. ES bool.filter).
+            # Degrade to semantic-only on failure - never break the request.
+            try:
+                return self.bm25.search(
+                    query, top_k=self.keyword_candidates, filters=filters
+                )
+            except Exception as exc:
+                logger.warning("Keyword backend failed (%s) - semantic only", exc)
+                return []
 
         if self.bm25.size == 0:
             # No keyword index (empty store / setup not run): semantic only.
-            return semantic
-
-        filters = self.retriever.filter_engine.extract_filters(query)
-        keyword = [
+            return []
+        return [
             c
             for c in self.bm25.search(query, top_k=self.keyword_candidates)
             if self._matches_filters(c.get("metadata") or {}, filters)
         ]
-
-        return self._rrf_merge(semantic, keyword)[:top_k]
 
     def _rrf_merge(self, semantic: list[dict], keyword: list[dict]) -> list[dict]:
         """Reciprocal Rank Fusion over the two ranked lists (by document id)."""

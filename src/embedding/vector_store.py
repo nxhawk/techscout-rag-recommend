@@ -143,6 +143,49 @@ class VectorStore:
             "metadatas": [row[2] for row in rows],
         }
 
+    def delete_product(self, product_id: str) -> int:
+        """Delete all chunks belonging to a product. Returns rows deleted."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"DELETE FROM {self.table_name} WHERE metadata->>'product_id' = %s",
+                (product_id,),
+            )
+            return cur.rowcount
+
+    def update_product_metadata(self, product_id: str, fields: dict) -> int:
+        """Merge ``fields`` into the metadata of every chunk of a product.
+
+        Used by the embedding sync worker for metadata-only changes (price,
+        rating) so embeddings are not recomputed. Returns rows updated.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"""
+                UPDATE {self.table_name}
+                SET metadata = metadata || %s::jsonb
+                WHERE metadata->>'product_id' = %s
+                """,
+                (json.dumps(fields, ensure_ascii=False), product_id),
+            )
+            return cur.rowcount
+
+    def get_product_content_hash(self, product_id: str) -> str | None:
+        """Return the stored content hash for a product (or None).
+
+        The embedding sync worker stores a hash of the text-bearing fields in
+        chunk metadata; comparing it lets snapshot replays skip re-embedding.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT metadata->>'content_hash' FROM {self.table_name}
+                WHERE metadata->>'product_id' = %s LIMIT 1
+                """,
+                (product_id,),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+
     def delete_collection(self) -> None:
         """Drop the table backing the current collection."""
         self.conn.execute(f"DROP TABLE IF EXISTS {self.table_name}")

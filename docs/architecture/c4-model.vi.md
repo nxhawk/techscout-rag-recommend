@@ -64,6 +64,12 @@ flowchart TB
         VDB[("Vector Store\n[Postgres + pgvector]\nvector + metadata")]
         Redis[("Cache\n[Redis]\ncache embedding /\ncache phản hồi LLM")]
         Files[("Lưu trữ file\ndata/raw, data/processed\nJSON/CSV")]
+        Cat[("Catalog\n[Postgres, product_catalog]\nsource of truth")]
+        ES[("Index keyword\n[Elasticsearch]\nBM25, product_chunks")]
+        Kafka[("Event Stream\n[Kafka, KRaft]\nragshop.public.product_catalog")]
+        Connect["CDC Connector\n[Debezium Connect]\nWAL → Kafka"]
+        IW["Indexer Worker\n[sync_worker.py --role indexer]"]
+        EW["Embedding Worker\n[sync_worker.py --role embedder]"]
     end
 
     Anthropic["Anthropic / OpenAI / Gemini APIs"]
@@ -79,14 +85,25 @@ flowchart TB
     Ingest -- "đọc JSON thô" --> Files
     Ingest -- "embed(text)" --> Anthropic
     Ingest -- "upsert(vectors)" --> VDB
+    Ingest -- "upsert profile\n(bootstrap)" --> Cat
+
+    API -- "CRUD\n/api/products" --> Cat
+    API -- "BM25 search\n(bool.filter pre-filter)" --> ES
+    Cat -- "WAL\n(logical decoding)" --> Connect
+    Connect -- "change events" --> Kafka
+    Kafka -- "consume" --> IW
+    Kafka -- "consume" --> EW
+    IW -- "upsert/delete\nchunk" --> ES
+    EW -- "upsert vector /\nchỉ update metadata" --> VDB
+    EW -- "embed(text)\n(chỉ khi text đổi)" --> Anthropic
 
     classDef person fill:#08427b,stroke:#052e56,color:#fff
     classDef container fill:#1168bd,stroke:#0b4884,color:#fff
     classDef storage fill:#438dd5,stroke:#2e6295,color:#fff
     classDef external fill:#999,stroke:#6b6b6b,color:#fff
     class User person
-    class API,Crawler,Ingest container
-    class VDB,Redis,Files storage
+    class API,Crawler,Ingest,Connect,IW,EW container
+    class VDB,Redis,Files,Cat,ES,Kafka storage
     class Anthropic,Sites external
 ```
 
@@ -100,6 +117,12 @@ flowchart TB
 | Vector Store | Postgres 16 + pgvector | Tìm kiếm tương đồng cosine (chỉ mục HNSW) trên embedding sản phẩm + metadata dạng JSONB | Service `postgres` trong `docker-compose.yml`, cổng 5432 — persist qua volume `pgdata`; kết nối qua `DATABASE_URL` |
 | Cache | Redis 7 | Dự kiến cache cho embedding và phản hồi LLM (`src/utils/cache.py`) | Service `redis` trong `docker-compose.yml`, cổng 6379. **Lưu ý:** `SimpleCache` hiện chỉ triển khai lưu trữ dạng dict trong bộ nhớ bất kể backend cấu hình — phần kết nối Redis đã được chuẩn bị nhưng chưa được sử dụng |
 | Lưu trữ file | Hệ thống file cục bộ | JSON crawl thô, dữ liệu đã xử lý/làm sạch, dữ liệu sản phẩm mẫu | Volume mount (`../data:/app/data`) |
+| Catalog | Postgres 16 (bảng `product_catalog`, cùng instance với vector store) | Source of truth cho dữ liệu sản phẩm; chỉ API CRUD và ingest bootstrap được ghi; CDC capture (`REPLICA IDENTITY FULL`, `wal_level=logical`) | Service `postgres` |
+| Index keyword | Elasticsearch 8 | BM25 keyword search trên chunk sản phẩm (index `product_chunks`) với pre-filter `bool.filter`; dẫn xuất từ catalog qua CDC | Service `elasticsearch`, port 9200, volume `esdata` |
+| Event Stream | Kafka 3.7 (KRaft, single node) | Stream sự kiện thay đổi có thứ tự (`ragshop.public.product_catalog`) nuôi cả hai sync worker | Service `kafka`, volume `kafkadata` |
+| CDC Connector | Debezium Connect 2.7 | Stream thay đổi row của `product_catalog` từ WAL Postgres vào Kafka; đăng ký idempotent bởi service one-shot `connect-init` (`docker/debezium/`) | Service `connect`, port 8083 |
+| Indexer Worker | Python CLI (`scripts/sync_worker.py --role indexer`) | Consume change event → upsert/delete chunk idempotent vào Elasticsearch | Service `indexer-worker` |
+| Embedding Worker | Python CLI (`scripts/sync_worker.py --role embedder`) | Consume change event → chỉ re-embed vào pgvector khi text đổi; đổi giá/rating là update metadata-only | Service `embedding-worker` |
 
 ## Mức 3: Component (Thành phần)
 
