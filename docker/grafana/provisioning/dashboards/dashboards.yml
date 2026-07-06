@@ -1,0 +1,14 @@
+# Grafana dashboard provisioning - loads every dashboard JSON found under the
+# mounted path so the "RAG - Overview" board exists on first boot.
+apiVersion: 1
+
+providers:
+  - name: RAG dashboards
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30 # pick up edits to the JSON without a restart
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

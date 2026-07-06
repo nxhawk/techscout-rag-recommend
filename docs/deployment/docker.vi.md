@@ -3,8 +3,9 @@
 Repository cung cấp một stack **Docker Compose** đầy đủ, chạy toàn bộ kiến trúc
 CDC chỉ với một lệnh: API, cả hai datastore (Postgres + pgvector và
 Elasticsearch), pipeline change-data-capture Kafka + Debezium, hai sync worker,
-Redis, **Kibana** để xem dữ liệu Elasticsearch, và **Kafka UI** để xem các topic
-Kafka và Debezium connector.
+Redis, **Kibana** để xem dữ liệu Elasticsearch, **Kafka UI** để xem các topic
+Kafka và Debezium connector, cùng một stack **Prometheus + Grafana** (kèm exporter
+cho từng datastore) để thu thập metric và dashboard — xem [Giám sát](monitoring.md).
 
 Có hai cách chạy dự án:
 
@@ -100,6 +101,12 @@ check (xem bên dưới), và `connect-init` đăng ký Debezium connector khi m
 | **indexer-worker** | build từ `docker/Dockerfile` | — | kafka, elasticsearch | `sync_worker.py --role indexer` → Elasticsearch; chờ ES lúc khởi động, healthcheck bằng heartbeat |
 | **embedding-worker** | build từ `docker/Dockerfile` | — | kafka, postgres | `sync_worker.py --role embedder` → pgvector (chỉ re-embed khi text đổi); chờ Postgres lúc khởi động, healthcheck bằng heartbeat |
 | **redis** | `redis:7-alpine` | `6379` | — | Cache |
+| **prometheus** | `prom/prometheus:v2.53.1` | `9090` | app | Scrape `/metrics` từ app + exporter; kho time-series ([Giám sát](monitoring.md)) |
+| **grafana** | `grafana/grafana:11.1.0` | `3000` | prometheus | Dashboard trên nền Prometheus; datasource + board **RAG - Overview** provision sẵn |
+| **postgres-exporter** | `quay.io/prometheuscommunity/postgres-exporter:v0.15.0` | `9187` | postgres | Metric Postgres cho Prometheus |
+| **redis-exporter** | `oliver006/redis_exporter:v1.62.0` | `9121` | redis | Metric Redis cho Prometheus |
+| **elasticsearch-exporter** | `quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0` | `9114` | elasticsearch | Metric Elasticsearch cho Prometheus |
+| **kafka-exporter** | `danielqsj/kafka-exporter:v1.7.0` | `9308` | kafka | **Lag** consumer-group + offset Kafka (độ mới CDC) |
 
 ### Thứ tự khởi động & health gating
 
@@ -164,6 +171,9 @@ Kibana ở `http://localhost:5601`; Kafka UI ở `http://localhost:8080`.
 docker compose up -d postgres elasticsearch kafka   # chỉ hạ tầng
 docker compose up -d kibana                          # thêm Kibana sau
 docker compose up -d kafka-ui                         # thêm Kafka UI sau
+docker compose up -d prometheus grafana \
+  postgres-exporter redis-exporter \
+  elasticsearch-exporter kafka-exporter               # thêm stack giám sát
 docker compose stop indexer-worker embedding-worker  # tạm dừng CDC worker
 docker compose restart connect-init                  # đăng ký lại connector
 ```
@@ -306,6 +316,15 @@ curl http://localhost:8083/connectors                                   # liệt
 curl http://localhost:8083/connectors/product-catalog-connector/status  # trạng thái + task
 ```
 
+### Metric & dashboard — Prometheus & Grafana
+
+Để xem request rate, độ trễ, tỉ lệ lỗi, lỗi hết quota LLM và lag CDC **theo thời
+gian**, mở Grafana tại `http://localhost:3000` (admin / admin) — dashboard
+**RAG - Overview** đã được provision sẵn. Prometheus ở `http://localhost:9090`
+(**Status → Targets** cho biết đang scrape những gì). App tự expose metric tại
+`http://localhost:8000/metrics`. Xem **[Giám sát](monitoring.md)** để biết toàn bộ
+luồng, danh sách metric và các truy vấn dashboard.
+
 ---
 
 ## Biến môi trường
@@ -340,12 +359,22 @@ Gemini). Hỗ trợ nhiều key để xoay vòng (`GEMINI_API_KEY=key_a,key_b`).
 | `5432` | postgres | Truy cập SQL (psql / DBeaver) |
 | `8083` | connect | REST Kafka Connect / Debezium |
 | `6379` | redis | Cache |
+| `3000` | grafana | Dashboard (admin / admin) |
+| `9090` | prometheus | Giao diện truy vấn + trạng thái scrape target |
+| `9187` | postgres-exporter | Metric Postgres |
+| `9121` | redis-exporter | Metric Redis |
+| `9114` | elasticsearch-exporter | Metric Elasticsearch |
+| `9308` | kafka-exporter | Metric lag/offset Kafka |
+
+`app` cũng tự expose metric Prometheus tại `http://localhost:8000/metrics`.
 
 | Volume | Service | Nội dung |
 | ------ | ------- | -------- |
 | `pgdata` | postgres | `product_catalog` + `products`/pgvector |
 | `esdata` | elasticsearch | Index keyword `product_chunks` |
 | `kafkadata` | kafka | Event log + Debezium offset |
+| `promdata` | prometheus | Lịch sử time-series đã scrape |
+| `grafanadata` | grafana | Trạng thái Grafana (chỉnh sửa dashboard, tùy chọn) |
 
 ---
 

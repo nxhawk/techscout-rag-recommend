@@ -1,0 +1,49 @@
+# Prometheus scrape configuration for the RAG stack.
+#
+# Prometheus PULLS metrics: every `scrape_interval` it issues an HTTP GET to
+# `<target>/<metrics_path>` for each target below and stores the samples. The
+# hostnames are the Docker Compose service names (same network as Prometheus).
+#
+# After `docker compose up -d prometheus`, verify at
+# http://localhost:9090/targets - every job should be "UP".
+
+global:
+  scrape_interval: 15s # how often to pull each target
+  evaluation_interval: 15s # how often to evaluate alerting/recording rules
+  external_labels:
+    stack: rag-product-recommend
+
+scrape_configs:
+  # Prometheus scraping itself - a cheap liveness signal for the scraper.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # The FastAPI app: HTTP request rate/latency/status (default instrumentation)
+  # plus the RAG-specific pipeline metrics (rag_pipeline_duration_seconds,
+  # rag_recommend_errors_total) exposed by api/metrics.py.
+  - job_name: rag-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["app:8000"]
+
+  # Postgres - source-of-truth catalog + pgvector semantic index.
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  # Redis - cache layer.
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  # Elasticsearch - product_chunks keyword/BM25 index.
+  - job_name: elasticsearch
+    static_configs:
+      - targets: ["elasticsearch-exporter:9114"]
+
+  # Kafka - CDC event bus; the consumer-group lag here is the freshness signal
+  # for the sync workers (how far the indexes trail the catalog).
+  - job_name: kafka
+    static_configs:
+      - targets: ["kafka-exporter:9308"]

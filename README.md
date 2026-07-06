@@ -33,6 +33,7 @@ stay in sync with a single source of truth automatically.
 | ES UI         | Kibana                                                        |
 | Crawling      | httpx + BeautifulSoup + lxml (tenacity for retries)          |
 | Cache         | Redis                                                        |
+| Monitoring    | Prometheus + Grafana (app `/metrics` + Postgres/Redis/ES/Kafka exporters) |
 | Container     | Docker + Docker Compose                                       |
 | Testing       | pytest                                                       |
 | Docs          | MkDocs Material (bilingual EN/VI)                            |
@@ -110,14 +111,15 @@ uv sync
 #      ENVIRONMENT=development
 #      LOG_LEVEL=INFO
 
-# 4. Start the full stack (API + datastores + CDC pipeline + Kibana)
+# 4. Start the full stack (API + datastores + CDC pipeline + Kibana + monitoring)
 cd docker && docker compose up --build -d && cd ..
 
 # 5. Seed the catalog + search indexes
 docker compose -f docker/docker-compose.yml exec app uv run python scripts/ingest.py
 #   or: ingest.py --catalog-only  (let the CDC workers build the indexes)
 
-# 6. Try it — API at http://localhost:8000, Kibana at http://localhost:5601
+# 6. Try it — API http://localhost:8000, Kibana http://localhost:5601,
+#    Grafana http://localhost:3000 (admin/admin), Prometheus http://localhost:9090
 ```
 
 Prefer running the API outside Docker? Start Postgres (and optionally
@@ -227,6 +229,7 @@ GitHub Pages, see `.github/workflows/docs.yml`). Highlights:
 - [CDC Sync](https://nxhawk.github.io/rag-product-recommend/architecture/cdc/) — how the indexes stay in sync
 - [Hybrid Retrieval](https://nxhawk.github.io/rag-product-recommend/architecture/hybrid-retrieval/) — semantic + BM25 + RRF
 - [Docker Deployment](https://nxhawk.github.io/rag-product-recommend/deployment/docker/) — the full Compose stack
+- [Monitoring](https://nxhawk.github.io/rag-product-recommend/deployment/monitoring/) — Prometheus + Grafana metrics & dashboards
 - [Viewing Data in Kibana](https://nxhawk.github.io/rag-product-recommend/deployment/kibana/) — inspect Elasticsearch
 
 To serve locally:

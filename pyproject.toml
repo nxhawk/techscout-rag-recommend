@@ -10,6 +10,8 @@ dependencies = [
     "uvicorn>=0.29.0",
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
+    # Observability (Prometheus metrics exposed at /metrics)
+    "prometheus-fastapi-instrumentator>=7.0.0",
     # LLM Clients
     "anthropic>=0.25.0",
     "openai>=1.12.0",

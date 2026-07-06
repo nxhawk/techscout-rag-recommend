@@ -3,6 +3,7 @@ import logging
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from api.metrics import setup_metrics
 from api.routes.recommend import router as recommend_router
 from api.routes.compare import router as compare_router
 from api.routes.search import router as search_router
@@ -43,6 +44,11 @@ app.include_router(recommend_router, prefix="/api", tags=["Recommend"])
 app.include_router(compare_router, prefix="/api", tags=["Compare"])
 app.include_router(search_router, prefix="/api", tags=["Search"])
 app.include_router(products_router, prefix="/api", tags=["Products"])
+
+# Expose Prometheus metrics at GET /metrics and instrument every route with the
+# default HTTP request/latency collectors. Registered after the routers so the
+# instrumentation middleware wraps them.
+setup_metrics(app)
 
 
 @app.get("/health")

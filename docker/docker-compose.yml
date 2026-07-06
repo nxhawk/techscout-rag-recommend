@@ -3,6 +3,10 @@
 #   kafka --> indexer-worker --> elasticsearch (keyword/BM25 index)
 #   kafka --> embedding-worker --> pgvector (semantic index)
 #   app: keyword branch reads elasticsearch, semantic branch reads pgvector.
+#
+# Observability (see docs/deployment/monitoring.md):
+#   app + *-exporter services expose /metrics --scrape--> prometheus --query--> grafana
+#   prometheus pulls: app (HTTP/pipeline), postgres, redis, elasticsearch, kafka.
 # Dev credentials only - real deployments must read secrets from env/vault.
 
 services:
@@ -238,7 +242,110 @@ services:
       retries: 3
       start_period: 180s
 
+  # ---------------------------------------------------------------------------
+  # Observability stack: Prometheus scrapes /metrics from the app and the four
+  # exporters below; Grafana visualises it. See docs/deployment/monitoring.md.
+  # ---------------------------------------------------------------------------
+
+  # Prometheus - pulls (scrapes) /metrics from every target on an interval and
+  # stores the time series. Scrape targets are in docker/prometheus/prometheus.yml.
+  # Open http://localhost:9090 (Status -> Targets to see what's UP).
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      # Keep 15 days of history - plenty for a dev/observability stack.
+      - "--storage.tsdb.retention.time=15d"
+    ports:
+      - "9090:9090"
+    depends_on:
+      app:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # Grafana - dashboards on top of Prometheus. The datasource and a starter
+  # "RAG - Overview" dashboard are auto-provisioned from docker/grafana/, so it
+  # works out of the box. Open http://localhost:3000 (login admin / admin).
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Land straight on the provisioned overview dashboard.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/rag-overview.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+
+  # postgres_exporter - turns Postgres internals (connections, transactions,
+  # cache hit ratio, replication/WAL) into Prometheus metrics on :9187.
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:postgres@postgres:5432/rag_products?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # redis_exporter - Redis stats (ops/sec, memory, hit rate, connected clients)
+  # on :9121.
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    ports:
+      - "9121:9121"
+    depends_on:
+      redis:
+        condition: service_started
+
+  # elasticsearch_exporter - cluster health, index docs/size, search & indexing
+  # latency for the product_chunks keyword index on :9114.
+  elasticsearch-exporter:
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0
+    command:
+      - "--es.uri=http://elasticsearch:9200"
+      - "--es.all"
+      - "--es.indices"
+      - "--es.indices_settings"
+    ports:
+      - "9114:9114"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # kafka_exporter - the key CDC signal: per-topic/consumer-group lag for the
+  # sync workers, plus broker/partition offsets on :9308.
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    command:
+      - "--kafka.server=kafka:9092"
+    ports:
+      - "9308:9308"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
 volumes:
   pgdata:
   esdata:
   kafkadata:
+  promdata:
+  grafanadata:

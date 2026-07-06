@@ -3,8 +3,10 @@
 The repository ships a full **Docker Compose** stack that runs the entire CDC
 architecture with a single command: the API, both datastores (Postgres +
 pgvector and Elasticsearch), the Kafka + Debezium change-data-capture pipeline,
-the two sync workers, Redis, **Kibana** for inspecting Elasticsearch, and
-**Kafka UI** for inspecting the Kafka topics and Debezium connector.
+the two sync workers, Redis, **Kibana** for inspecting Elasticsearch,
+**Kafka UI** for inspecting the Kafka topics and Debezium connector, and a
+**Prometheus + Grafana** stack (with per-datastore exporters) for metrics and
+dashboards — see [Monitoring](monitoring.md).
 
 There are two ways to run the project:
 
@@ -100,6 +102,12 @@ connector once everything is ready.
 | **indexer-worker** | built from `docker/Dockerfile` | — | kafka, elasticsearch | `sync_worker.py --role indexer` → Elasticsearch; waits for ES at startup, heartbeat healthcheck |
 | **embedding-worker** | built from `docker/Dockerfile` | — | kafka, postgres | `sync_worker.py --role embedder` → pgvector (re-embeds only on text change); waits for Postgres at startup, heartbeat healthcheck |
 | **redis** | `redis:7-alpine` | `6379` | — | Cache service |
+| **prometheus** | `prom/prometheus:v2.53.1` | `9090` | app | Scrapes `/metrics` from the app + exporters; time-series store ([Monitoring](monitoring.md)) |
+| **grafana** | `grafana/grafana:11.1.0` | `3000` | prometheus | Dashboards over Prometheus; datasource + **RAG - Overview** board auto-provisioned |
+| **postgres-exporter** | `quay.io/prometheuscommunity/postgres-exporter:v0.15.0` | `9187` | postgres | Postgres metrics for Prometheus |
+| **redis-exporter** | `oliver006/redis_exporter:v1.62.0` | `9121` | redis | Redis metrics for Prometheus |
+| **elasticsearch-exporter** | `quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0` | `9114` | elasticsearch | Elasticsearch metrics for Prometheus |
+| **kafka-exporter** | `danielqsj/kafka-exporter:v1.7.0` | `9308` | kafka | Kafka consumer-group **lag** + offsets (CDC freshness) |
 
 ### Startup order & health gating
 
@@ -165,6 +173,9 @@ at `http://localhost:8080`.
 docker compose up -d postgres elasticsearch kafka   # just the infra
 docker compose up -d kibana                          # add Kibana later
 docker compose up -d kafka-ui                         # add Kafka UI later
+docker compose up -d prometheus grafana \
+  postgres-exporter redis-exporter \
+  elasticsearch-exporter kafka-exporter               # add the monitoring stack
 docker compose stop indexer-worker embedding-worker  # pause the CDC workers
 docker compose restart connect-init                  # re-register the connector
 ```
@@ -309,6 +320,16 @@ curl http://localhost:8083/connectors                                   # list
 curl http://localhost:8083/connectors/product-catalog-connector/status  # state + tasks
 ```
 
+### Metrics & dashboards — Prometheus & Grafana
+
+For request rate, latency, error rate, LLM-quota failures and CDC lag **over
+time**, open Grafana at `http://localhost:3000` (admin / admin) — the
+**RAG - Overview** dashboard is provisioned out of the box. Prometheus is at
+`http://localhost:9090` (**Status → Targets** shows what's being scraped). The
+app exposes its own metrics at `http://localhost:8000/metrics`. See
+**[Monitoring](monitoring.md)** for the full flow, the metric reference and the
+dashboard queries.
+
 ---
 
 ## Environment Variables
@@ -344,12 +365,22 @@ Compose stack the infra variables are set for you.
 | `5432` | postgres | SQL access (psql / DBeaver) |
 | `8083` | connect | Kafka Connect / Debezium REST |
 | `6379` | redis | Cache |
+| `3000` | grafana | Dashboards (admin / admin) |
+| `9090` | prometheus | Query UI + scrape-target status |
+| `9187` | postgres-exporter | Postgres metrics |
+| `9121` | redis-exporter | Redis metrics |
+| `9114` | elasticsearch-exporter | Elasticsearch metrics |
+| `9308` | kafka-exporter | Kafka lag/offset metrics |
+
+The `app` also serves its own Prometheus metrics at `http://localhost:8000/metrics`.
 
 | Volume | Service | Contents |
 | ------ | ------- | -------- |
 | `pgdata` | postgres | `product_catalog` + `products`/pgvector |
 | `esdata` | elasticsearch | `product_chunks` keyword index |
 | `kafkadata` | kafka | Event log + Debezium offsets |
+| `promdata` | prometheus | Scraped metrics time-series history |
+| `grafanadata` | grafana | Grafana state (dashboard edits, prefs) |
 
 ---
 

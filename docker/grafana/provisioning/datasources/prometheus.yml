@@ -1,0 +1,13 @@
+# Grafana datasource provisioning - wires Grafana to Prometheus automatically
+# on first boot, so there is nothing to click through in the UI.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    # Fixed uid so the provisioned dashboard can reference this datasource.
+    uid: rag-prometheus
+    access: proxy # Grafana server queries Prometheus (not the browser)
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true

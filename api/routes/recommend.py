@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.deps import get_cached_recommend_pipeline
+from api.metrics import PIPELINE_LATENCY, RECOMMEND_ERRORS
 from api.schemas import RecommendRequest, RecommendResponse
 from src.pipeline.recommend_pipeline import RecommendPipeline
 from src.utils.helpers import is_rate_limit_error
@@ -46,9 +47,14 @@ def recommend_products(
     threadpool instead of blocking the event loop.
     """
     try:
-        result = pipeline.run(request.query, top_k=request.top_k)
+        # Time the whole pipeline (retrieval + rerank + LLM) so the dashboard
+        # can separate "thinking" latency from raw HTTP overhead.
+        with PIPELINE_LATENCY.labels(pipeline="recommend").time():
+            result = pipeline.run(request.query, top_k=request.top_k)
     except Exception as exc:
         _log_pipeline_error(request.query, exc)
+        # Split quota/429 from other backend failures for the error panel.
+        RECOMMEND_ERRORS.labels(reason="quota" if is_rate_limit_error(exc) else "error").inc()
         raise HTTPException(status_code=503, detail=_error_detail(exc)) from exc
 
     # The LLM returns {"recommendations": [...], "summary": "..."} per the
