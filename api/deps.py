@@ -21,6 +21,7 @@ from src.pipeline.recommend.engine import RecommendEngine
 from src.pipeline.recommend_pipeline import RecommendPipeline
 from src.pipeline.compare.comparator import ProductComparator
 from src.pipeline.compare_pipeline import ComparePipeline
+from api.paths import SETTINGS_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def _mask_dsn(dsn: str) -> str:
 @lru_cache()
 def get_config() -> PipelineConfig:
     """Get pipeline configuration (cached)."""
-    return PipelineConfig.from_yaml("configs/settings.yaml")
+    return PipelineConfig.from_yaml(str(SETTINGS_PATH))
 
 
 def get_embedder(config: PipelineConfig | None = None) -> ProductEmbedder:
