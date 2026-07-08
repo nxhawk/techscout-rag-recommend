@@ -18,6 +18,10 @@ rag-product-recommend/
 │   ├── retrieval/               # Truy xuất & tìm kiếm sản phẩm
 │   ├── sync/                   # CDC sync worker (Debezium → ES/pgvector)
 │   ├── generation/               # Sinh nội dung bằng LLM & prompt
+│   ├── guardrails/              # Validate input/context/output không dùng LLM
+│   │   ├── input/               #   normalize, heuristics, denylist injection
+│   │   ├── context/              #   sanitize dữ liệu sản phẩm đã truy xuất
+│   │   └── output/               #   validate schema + grounding
 │   ├── pipeline/                # Tầng điều phối
 │   │   ├── recommend/          #   Logic nghiệp vụ gợi ý
 │   │   └── compare/            #   Logic nghiệp vụ so sánh
@@ -154,7 +158,7 @@ Toàn bộ logic domain nằm ở đây. Đây là một Python package thuần 
 | ---- | ------- | ------------------- |
 | `llm_client.py` | Client thống nhất cho Anthropic, OpenAI, và Gemini — mọi lời gọi LLM đều đi qua đây | Khi thêm LLM provider mới hoặc đổi interface của client |
 | `response_parser.py` | Parse JSON có cấu trúc từ output văn bản của LLM | Khi đổi định dạng phản hồi mong đợi hoặc thêm loại phản hồi mới |
-| `guardrails.py` | Validate input (độ dài query, phát hiện injection) và validate output (JSON hợp lệ, không hallucination) | Khi thêm kiểm tra an toàn mới hoặc điều chỉnh ngưỡng validate |
+| `guardrails.py` | **Legacy** — module input/output cũ, đã được thay thế bởi `src/guardrails/` (bên dưới); không còn pipeline nào gọi tới | Không mở rộng module này; thêm kiểm tra mới vào `src/guardrails/` |
 
 **`src/generation/prompt_templates/`** — Một file cho mỗi use case, mỗi file export `SYSTEM_PROMPT` và `USER_PROMPT_TEMPLATE` dưới dạng hằng số ở cấp module.
 
@@ -165,6 +169,43 @@ Toàn bộ logic domain nằm ở đây. Đây là một Python package thuần 
 | `review_summary_prompt.py` | Prompt để tóm tắt đánh giá người dùng | Khi thêm tính năng tóm tắt review |
 
 **Khi nào thêm file mới:** Khi tạo một loại pipeline mới (vd: `faq_prompt.py` cho pipeline FAQ) hoặc một LLM provider mới cần module client riêng.
+
+### `src/guardrails/` — Guardrail không dùng LLM
+
+**Mục đích:** Validate rule/heuristic/schema cho cả hai pipeline — không gọi LLM. Mọi guardrail đều trả về cùng một `GuardrailResult` (`allow` / `sanitize` / `block`). Xem [Guardrail](guardrails.vi.md) để biết đầy đủ contract và sơ đồ.
+
+| File | Mục đích | Khi nào thêm/cập nhật |
+| ---- | ------- | ------------------- |
+| `types.py` | `GuardrailAction`, `GuardrailResult` — contract kết quả dùng chung | Khi shape kết quả cần thêm trường mới |
+| `base.py` | `BaseGuardrail` (ABC), `GuardrailChain` (chạy danh sách guardrail, short-circuit khi `block`) | Khi đổi cách các guardrail được ghép nối |
+| `config.py` | `GuardrailConfig` — mọi ngưỡng (độ dài query, số URL, độ dài field context, `max_compare_products`, ...) tập trung một chỗ | Khi thêm một giới hạn có thể chỉnh mới |
+| `exceptions.py` | `InputGuardrailBlocked` — pipeline raise, route map thành `HTTP 422` | Khi đổi contract block/error |
+| `logging_utils.py` | `log_guardrail_event()` — log có cấu trúc `guardrail=... action=... reason=...` | Khi đổi định dạng log |
+| `fallback.py` | `build_recommend_fallback()` / `build_compare_fallback()` — phản hồi tất định dựng từ dữ liệu đã truy xuất, không gọi lại LLM | Khi đổi hình dạng phản hồi degraded |
+
+**`src/guardrails/input/`** — Kiểm tra truy vấn thô, theo thứ tự, trước khi truy xuất.
+
+| File | Mục đích | Khi nào thêm/cập nhật |
+| ---- | ------- | ------------------- |
+| `normalize.py` | `NormalizeGuardrail` — Unicode NFC, bỏ ký tự điều khiển, gộp khoảng trắng (luôn `sanitize`) | Khi đổi quy tắc chuẩn hóa text |
+| `heuristics.py` | `HeuristicGuardrail` — kiểm tra rỗng/độ dài/số URL/code block/ký tự lặp | Khi tinh chỉnh ngưỡng độ dài hoặc heuristic |
+| `injection.py` | `InjectionGuardrail` — regex denylist cho prompt injection/jailbreak (tiếng Anh + tiếng Việt) | Khi thêm cách diễn đạt injection mới cần chặn |
+
+**`src/guardrails/context/`** — Sanitize dữ liệu sản phẩm đã truy xuất trước khi đưa vào prompt.
+
+| File | Mục đích | Khi nào thêm/cập nhật |
+| ---- | ------- | ------------------- |
+| `sanitizer.py` | `sanitize_text_field()` / `sanitize_product_fields()` — bỏ HTML/script + câu chứa chỉ dẫn giả mạo, cắt độ dài | Khi có trường sản phẩm dạng text tự do mới cần sanitize |
+
+**`src/guardrails/output/`** — Validate và grounding phản hồi JSON của LLM.
+
+| File | Mục đích | Khi nào thêm/cập nhật |
+| ---- | ------- | ------------------- |
+| `schemas.py` | `RecommendLLMOutput`, `CompareLLMOutput` — model Pydantic khớp đúng contract JSON của từng prompt template | Khi contract JSON của prompt template thay đổi |
+| `validator.py` | Parse JSON (qua `ResponseParser`) và validate theo schema tương ứng | Khi đổi cách xử lý lỗi parse |
+| `grounding.py` | `ground_recommendations()` / `ground_compare_analysis()` — loại item có tên không khớp sản phẩm đã truy xuất/so sánh | Khi đổi quy tắc so khớp tên |
+
+**Khi nào thêm file mới:** Khi thêm guardrail cho một pipeline mới (vd `/api/search`) — tái sử dụng `build_input_chain()` và `sanitize_text_field()` thay vì viết lại logic.
 
 ### `src/pipeline/` — Tầng điều phối
 
@@ -243,15 +284,32 @@ Toàn bộ logic domain nằm ở đây. Đây là một Python package thuần 
 
 ## `tests/` — Bộ test
 
-**Mục đích:** Test tự động dùng pytest. Phản chiếu cấu trúc của `src/`.
+**Mục đích:** Test tự động dùng pytest. Unit test phản chiếu layout của `src/` và `api/`.
 
 | Path | Mục đích | Khi nào thêm/cập nhật |
 | ---- | ------- | ------------------- |
-| `conftest.py` | Fixture dùng chung (mock config, dữ liệu mẫu, test client) | Khi thêm fixture cần dùng bởi nhiều file test |
-| `unit/` | Unit test — test từng class/hàm riêng lẻ với mock | Thêm một file test cho mỗi module mới trong `src/` hoặc `api/` |
-| `integration/` | Integration test — test toàn bộ luồng pipeline với dependency thật (hoặc docker) | Thêm test khi có pipeline hoặc endpoint API mới |
+| `conftest.py` | Fixture dùng chéo domain (`sample_product`, `sample_products`) | Khi thêm fixture cần bởi nhiều domain |
+| `unit/<domain>/` | Unit test cho một domain (`api/`, `retrieval/`, `pipeline/`, …) | Thêm folder khi có domain mới ở `src/` hoặc `api/` |
+| `unit/<domain>/conftest.py` | Fixture dùng chung trong một domain (vd. API `TestClient`) | Khi nhiều file test cùng domain chia sẻ setup |
+| `integration/` | Integration test — luồng đầy đủ với dependency thật (hoặc docker) | Thêm test khi pipeline/endpoint cần coverage có dịch vụ |
 
-**Quy ước đặt tên:** `test_<tên_module>.py` (vd: `test_filter_engine.py` cho `src/retrieval/filter_engine.py`).
+**Layout (unit):**
+
+```
+tests/unit/
+├── api/              # schemas, metrics, routes/
+├── embedding/
+├── guardrails/
+├── ingestion/
+├── pipeline/
+├── retrieval/
+├── sync/
+└── utils/
+```
+
+**Quy ước đặt tên:** `tests/unit/<domain>/test_<module>.py` tương ứng với
+`src/<domain>/<module>.py` hoặc `api/<path>/<module>.py`. Test route đặt trong
+`tests/unit/api/routes/test_<route>.py`.
 
 ---
 
@@ -351,7 +409,8 @@ Toàn bộ logic domain nằm ở đây. Đây là một Python package thuần 
 | Vector DB | Luôn đi qua `src/embedding/vector_store.py` |
 | Prompt template | Hằng số cấp module: `SYSTEM_PROMPT`, `USER_PROMPT_TEMPLATE` |
 | API dependency | Factory function trong `api/deps.py` (vd: `get_retriever()`, `get_llm_client()`) |
+| Guardrail | Kiểm tra input/context/output không dùng LLM luôn đi qua `src/guardrails/` (xem [Guardrail](guardrails.vi.md)) — không bao giờ dùng `src/generation/guardrails.py` (legacy) |
 | Văn bản hiển thị cho người dùng | Tiếng Việt |
 | Code & comment | Tiếng Anh |
 | Quản lý package | Chỉ dùng `uv` — không bao giờ `pip install` |
-| Module mới | Luôn thêm file test tương ứng trong `tests/unit/` |
+| Module mới | Luôn thêm file test tương ứng trong `tests/unit/<domain>/` (mirror đường dẫn module) |

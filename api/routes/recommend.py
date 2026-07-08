@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from api.deps import get_cached_recommend_pipeline
 from api.metrics import PIPELINE_LATENCY, RECOMMEND_ERRORS
 from api.schemas import RecommendRequest, RecommendResponse
+from src.guardrails import InputGuardrailBlocked
 from src.pipeline.recommend_pipeline import RecommendPipeline
 from src.utils.helpers import is_rate_limit_error
 
@@ -51,6 +52,13 @@ def recommend_products(
         # can separate "thinking" latency from raw HTTP overhead.
         with PIPELINE_LATENCY.labels(pipeline="recommend").time():
             result = pipeline.run(request.query, top_k=request.top_k)
+    except InputGuardrailBlocked as exc:
+        # Business-rule input guardrail (injection/heuristics) rejected the
+        # query. Schema-level issues (blank/too long) are already caught by
+        # RecommendRequest validators as a plain 422 before we get here.
+        logger.info("Recommend blocked by input guardrail: %s", exc.reason)
+        RECOMMEND_ERRORS.labels(reason="guardrail_input").inc()
+        raise HTTPException(status_code=422, detail=exc.reason) from exc
     except Exception as exc:
         _log_pipeline_error(request.query, exc)
         # Split quota/429 from other backend failures for the error panel.
@@ -59,7 +67,10 @@ def recommend_products(
 
     # The LLM returns {"recommendations": [...], "summary": "..."} per the
     # prompt contract; on unparseable output the parser falls back to
-    # {"text": "...", "structured": False}.
+    # {"text": "...", "structured": False}. The output guardrail (schema +
+    # grounding) inside the pipeline already replaced malformed/ungrounded
+    # output with a deterministic fallback, so this stays a plain 200.
     recommendations = result.get("recommendations") or []
     summary = result.get("summary") or result.get("text") or ""
-    return RecommendResponse(recommendations=recommendations, summary=summary)
+    warnings = result.get("warnings") or []
+    return RecommendResponse(recommendations=recommendations, summary=summary, warnings=warnings)

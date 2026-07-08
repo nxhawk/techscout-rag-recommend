@@ -42,8 +42,14 @@ The recommendation pipeline finds products matching the user's intent and genera
 
 ```mermaid
 flowchart LR
+    subgraph Guard0["0. Input Guardrail"]
+        Q0[Raw Query] --> GIN["normalize → heuristics\n→ injection"]
+        GIN -->|block| E422["raise\nInputGuardrailBlocked"]
+        GIN -->|allow / sanitize| Q[Sanitized Query]
+    end
+
     subgraph Intent["1. Parse Intent"]
-        Q[Query] --> IP[UserIntentParser]
+        Q --> IP[UserIntentParser]
         IP --> Intent_Out["budget, use_case,\npriorities, brand_pref"]
     end
 
@@ -69,14 +75,24 @@ flowchart LR
     end
 
     subgraph Generate["4. Generate"]
-        TopK --> PT[Prompt Template]
+        TopK --> GCTX["Context Guardrail\n(sanitize_text_field per product)"]
+        GCTX --> PT[Prompt Template]
         PT --> LLM[LLM Client]
         LLM --> RP[ResponseParser]
-        RP --> Resp[JSON Response]
+        RP --> GOUT["Output Guardrail\n(schema validate + grounding)"]
+        GOUT -->|invalid / ungrounded| FB["Deterministic Fallback\n(from TopK, no 2nd LLM call)"]
+        GOUT -->|valid & grounded| Resp["JSON Response\n+ warnings[]"]
+        FB --> Resp
     end
 ```
 
 ### Step-by-Step
+
+**Step 0 — Input Guardrail**
+
+Before anything else, the raw query runs through the input `GuardrailChain`: `NormalizeGuardrail` (strip control chars, collapse whitespace) → `HeuristicGuardrail` (blank/length/URL-count/code-block checks) → `InjectionGuardrail` (prompt-injection/jailbreak regex denylist, English + Vietnamese). A `block` result raises `InputGuardrailBlocked`, which the route maps to `HTTP 422` with the Vietnamese reason — retrieval and the LLM are never reached. A `sanitize` result (e.g. collapsed repeated characters) just replaces the query text and processing continues.
+
+**Source:** `src/guardrails/input/`, `src/pipeline/recommend_pipeline.py`
 
 **Step 1 — Parse User Intent**
 
@@ -119,9 +135,11 @@ Products are sorted by `final_score` descending and truncated to `top_k`.
 
 **Step 4 — Generate LLM Response**
 
-The top products are formatted into a context string (name, brand, price, rating, score — these fields come from the chunk metadata written at ingest time) and injected into a prompt template along with the parsed intent. The LLM is called in **native JSON mode** (Gemini `response_mime_type: application/json`, OpenAI `response_format: json_object`), so it returns strict JSON with no prose preamble. The `ResponseParser` parses it into `recommendations` + `summary`; if parsing ever fails, the raw text is returned as a fallback `summary`.
+The top products are first run through the **context guardrail** (`sanitize_text_field()` — strips HTML/script and embedded-instruction sentences, truncates each field), then formatted into a context string (name, brand, price, rating, score — these fields come from the chunk metadata written at ingest time) and injected into a prompt template along with the parsed intent. The LLM is called in **native JSON mode** (Gemini `response_mime_type: application/json`, OpenAI `response_format: json_object`), so it returns strict JSON with no prose preamble.
 
-**Source:** `src/pipeline/recommend_pipeline.py`, `src/generation/prompt_templates/recommend_prompt.py`
+The raw text then goes through the **output guardrail**: `ResponseParser` extracts JSON (direct or markdown-fenced), which is validated against `RecommendLLMOutput` (Pydantic), then every recommendation's `name` is **grounded** against the retrieved product list (unmatched items are dropped). If validation fails, or grounding empties the list, the pipeline falls back to a deterministic response built from the already-scored `TopK` products — **no second LLM call**. Either way the API returns `200`; a `warnings[]` list explains anything that was sanitized, dropped, or replaced. See [Guardrails](guardrails.md) for the full mechanism.
+
+**Source:** `src/pipeline/recommend_pipeline.py`, `src/generation/prompt_templates/recommend_prompt.py`, `src/guardrails/`
 
 ---
 
@@ -131,12 +149,18 @@ The comparison pipeline retrieves specs for multiple products and generates a de
 
 ```mermaid
 flowchart LR
+    subgraph Guard0["0. Input Guardrail (query only)"]
+        Q0[Query, if provided] --> GIN["normalize → heuristics\n→ injection"]
+        GIN -->|block| E422["raise\nInputGuardrailBlocked"]
+        GIN -->|allow / sanitize| Q[Sanitized Query]
+    end
+
     subgraph Extract["1. Get Products"]
-        Q[Query] --> EX{product_ids\nprovided?}
-        EX -->|Yes| Lookup[Lookup by ID]
+        Q --> EX{product_ids\nprovided?}
+        EX -->|Yes| Lookup["Lookup by ID\n(ProductRepository)"]
         EX -->|No| Search[Retrieve from query]
         Lookup --> Products
-        Search --> Products["Product list\n≥ 2 required"]
+        Search --> Products["Product list\n(max_compare_products,\n≥ 2 required)"]
     end
 
     subgraph Compare["2. Compare"]
@@ -148,24 +172,34 @@ flowchart LR
     end
 
     subgraph Analyze["3. LLM Analysis"]
-        Table --> PT[Prompt Template]
-        Products --> PT
+        Table --> GCTX["Context Guardrail\n(sanitize_text_field per product)"]
+        Products --> GCTX
+        GCTX --> PT[Prompt Template]
         PT --> LLM[LLM Client]
         LLM --> RP[ResponseParser]
-        RP --> Resp["JSON Response\n(table + analysis)"]
+        RP --> GOUT["Output Guardrail\n(schema validate + grounding)"]
+        GOUT -->|invalid / ungrounded| FB["Deterministic Fallback\n(from Products, no 2nd LLM call)"]
+        GOUT -->|valid & grounded| Resp["JSON Response\n(table + analysis)\n+ warnings[]"]
+        FB --> Resp
     end
 ```
 
 ### Step-by-Step
 
+**Step 0 — Input Guardrail**
+
+Only runs when a free-text `query` is provided (a pure `product_ids` request has no query to check). Same `GuardrailChain` as the recommend pipeline: normalize → heuristics → injection. A `block` raises `InputGuardrailBlocked` → `HTTP 422`.
+
+**Source:** `src/guardrails/input/`, `src/pipeline/compare_pipeline.py`
+
 **Step 1 — Get Products**
 
 Two paths depending on the API call:
 
-- **With `product_ids`** — directly look up products from the database.
+- **With `product_ids`** — look up each id via `ProductRepository` (the source-of-truth catalog).
 - **Without `product_ids`** — use the `ProductRetriever` to search for products mentioned in the query, then take the top 3.
 
-At least 2 products are required; otherwise the pipeline returns an error.
+The resulting list is capped at `GuardrailConfig.max_compare_products` (default 5). At least 2 products are required; otherwise the pipeline returns `{"error": "Cần ít nhất 2 sản phẩm để so sánh."}`, which the route maps to `HTTP 422`.
 
 **Step 2 — Compare Specifications**
 
@@ -179,9 +213,11 @@ The `ProductComparator` orchestrates the comparison:
 
 **Step 3 — LLM Analysis**
 
-The comparison table and product descriptions are injected into a prompt template. The LLM produces a detailed Vietnamese analysis covering strengths, weaknesses, and a final recommendation based on use case. The response includes both the structured table and the narrative analysis.
+Product descriptions run through the **context guardrail** (`sanitize_text_field()`) before being injected into the prompt template alongside the comparison table. The LLM produces a detailed Vietnamese analysis covering strengths, weaknesses, and a final recommendation based on use case.
 
-**Source:** `src/pipeline/compare_pipeline.py`, `src/generation/prompt_templates/compare_prompt.py`
+The raw response then goes through the **output guardrail**: parsed and validated against `CompareLLMOutput` (Pydantic), then every `product_analysis[].name` is **grounded** against the products actually being compared (unmatched items dropped). On schema failure or an empty grounded result, the pipeline falls back to a deterministic analysis built from the comparison table — **no second LLM call**. The response always includes both the structured table and the narrative analysis, plus a `warnings[]` list. See [Guardrails](guardrails.md).
+
+**Source:** `src/pipeline/compare_pipeline.py`, `src/generation/prompt_templates/compare_prompt.py`, `src/guardrails/`
 
 ---
 
@@ -247,12 +283,9 @@ Enabled via `use_reranker: true` in `configs/settings.yaml` (requires `uv add se
 
 ### Guardrails
 
-The `Guardrails` module validates both input and output:
+Both pipelines run three non-LLM guardrail stages: an **input guardrail** (normalize → heuristics → injection denylist) rejects or cleans the raw query before retrieval; a **context guardrail** sanitizes retrieved product text (strip HTML, strip embedded instructions, truncate) before it enters the prompt; an **output guardrail** validates the LLM's JSON against a Pydantic schema and **grounds** every item against the retrieved/compared products, falling back to a deterministic response (no second LLM call) on failure. See [Guardrails](guardrails.md) for the full contract, package layout, and extension guide.
 
-- **Input validation** — checks query length, detects prompt injection attempts
-- **Output validation** — ensures LLM responses are well-formed JSON and don't contain hallucinated product data
-
-**Source:** `src/generation/guardrails.py`
+**Source:** `src/guardrails/`
 
 ### LLM Client
 
@@ -313,11 +346,14 @@ flowchart TD
     end
 
     subgraph Runtime["Query Processing (online)"]
-        USER["User Query\n(Vietnamese)"] --> GUARD_IN[Guardrails\ninput check]
+        USER["User Query\n(Vietnamese)"] --> GUARD_IN["Input Guardrail\n(normalize/heuristics/injection)"]
+        GUARD_IN -->|block| E422["HTTP 422"]
         GUARD_IN --> ROUTER[RAG Router]
         ROUTER --> PIPELINE["Recommend / Compare\nPipeline"]
-        PIPELINE --> GUARD_OUT[Guardrails\noutput check]
-        GUARD_OUT --> API["JSON Response"]
+        PIPELINE --> GUARD_CTX["Context Guardrail\n(sanitize product text)"]
+        GUARD_CTX --> LLMCALL[LLM Client]
+        LLMCALL --> GUARD_OUT["Output Guardrail\n(schema + grounding,\nfallback on failure)"]
+        GUARD_OUT --> API["JSON Response\n+ warnings[]"]
     end
 
     STORE -.->|"semantic search"| PIPELINE

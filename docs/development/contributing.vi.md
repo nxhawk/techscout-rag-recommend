@@ -23,7 +23,7 @@ uv sync --group dev --group docs
 2. Dùng import tuyệt đối.
 3. Thêm type hint cho mọi hàm public.
 4. Viết docstring bằng tiếng Anh.
-5. Thêm unit test trong `tests/unit/`.
+5. Thêm unit test trong `tests/unit/<domain>/test_<module>.py`, mirror đường dẫn module dưới `src/` hoặc `api/` (xem [Testing](testing.vi.md)).
 6. Cập nhật `CLAUDE.md` nếu module đưa ra pattern mới.
 
 ## Commit Message

@@ -10,8 +10,8 @@
 |---|---|
 | `tests/conftest.py` | 2 fixtures: `sample_product`, `sample_products` |
 | `tests/test_crawler.py` | Khá đầy đủ (parser, spider, config, review, discovery) |
-| `tests/test_chunker.py`, `test_filter_engine.py`, `test_router.py` | Có, nhưng **trùng lặp** với bản trong `tests/unit/` |
-| `tests/unit/test_recommend_route.py` | Test API duy nhất |
+| `tests/unit/` | **124 unit test**, tổ chức theo domain mirror `src/` + `api/` (`api/`, `embedding/`, `guardrails/`, `ingestion/`, `pipeline/`, `retrieval/`, `sync/`, `utils/`) |
+| `tests/unit/api/conftest.py` | Fixture `client` dùng chung cho route/metrics tests |
 | `tests/integration/` | **Rỗng** (chỉ có `__init__.py`) |
 
 **Thiếu:**
@@ -66,31 +66,41 @@ markers = [
 ]
 ```
 
-### 3.3. Dọn cấu trúc `tests/` (xóa trùng lặp)
+### 3.3. Cấu trúc `tests/` (đã áp dụng)
 
-- Di chuyển `tests/test_crawler.py` → `tests/unit/test_crawler.py`.
-- Xóa bản trùng ở root: `tests/test_chunker.py`, `tests/test_filter_engine.py`, `tests/test_router.py` (giữ bản trong `tests/unit/`, merge case nào chỉ có ở root).
-- Cấu trúc đích:
+Unit test mirror layout production. Cấu trúc hiện tại:
 
 ```
 tests/
-├── conftest.py                  # shared fixtures + fakes
+├── conftest.py                  # shared fixtures (sample_product, sample_products)
 ├── unit/
-│   ├── crawler/
-│   ├── ingestion/
+│   ├── api/
+│   │   ├── conftest.py          # shared TestClient + dependency override cleanup
+│   │   ├── test_metrics.py
+│   │   ├── test_schemas.py
+│   │   └── routes/
+│   │       ├── test_compare.py
+│   │       ├── test_products.py
+│   │       └── test_recommend.py
 │   ├── embedding/
-│   ├── retrieval/
-│   ├── generation/
+│   ├── guardrails/
+│   ├── ingestion/
 │   ├── pipeline/
-│   └── api/
-└── integration/
-    ├── conftest.py              # pg fixtures, TestClient with overrides
+│   ├── retrieval/
+│   ├── sync/
+│   └── utils/
+└── integration/                 # pg fixtures, TestClient with overrides (planned)
     ├── test_vector_store_pg.py
     ├── test_api_recommend.py
     ├── test_api_compare.py
     ├── test_api_search.py
     └── test_pipeline_e2e.py
 ```
+
+**Việc còn lại (nền tảng):**
+
+- Di chuyển `tests/test_crawler.py` → `tests/unit/crawler/` (khi dọn trùng lặp).
+- Xóa bản trùng ở root nếu còn: `tests/test_chunker.py`, `tests/test_filter_engine.py`, `tests/test_router.py`.
 
 ### 3.4. Mở rộng `tests/conftest.py` — fakes dùng chung
 

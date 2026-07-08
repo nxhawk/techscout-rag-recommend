@@ -132,7 +132,7 @@ Phóng to container **Web API** cho thấy các thành phần xử lý một req
 flowchart TB
     subgraph API["Container Web API"]
         Routes["API Routes\napi/routes/*.py"]
-        Guard["Guardrails\nsrc/generation/guardrails.py"]
+        GuardIn["Guardrail đầu vào\nsrc/guardrails/input/"]
         Router["RAG Router\nsrc/pipeline/rag_router.py"]
 
         subgraph Rec["Recommend Pipeline"]
@@ -150,15 +150,17 @@ flowchart TB
             Formatter["ComparisonFormatter"]
         end
 
+        GuardCtx["Guardrail ngữ cảnh\nsrc/guardrails/context/"]
         LLMClient["LLM Client\nsrc/generation/llm_client.py"]
         RespParser["ResponseParser\nsrc/generation/response_parser.py"]
+        GuardOut["Guardrail đầu ra\nsrc/guardrails/output/, fallback.py"]
         Embedder["ProductEmbedder\nsrc/embedding/product_embedder.py"]
     end
 
     VDB[("Vector Store")]
     Providers["Anthropic / OpenAI / Gemini"]
 
-    Routes --> Guard --> Router
+    Routes --> GuardIn --> Router
     Router -->|RECOMMEND| IntentP --> FilterE --> Retriever
     Retriever --> Reranker --> Scorer
     Router -->|COMPARE| Extract --> Aligner --> Comparator --> Formatter
@@ -167,12 +169,13 @@ flowchart TB
     Retriever --> Embedder
     Embedder -- "embed()" --> Providers
 
-    Scorer --> LLMClient
-    Formatter --> LLMClient
+    Scorer --> GuardCtx
+    Formatter --> GuardCtx
+    GuardCtx --> LLMClient
     LLMClient -- "generate()" --> Providers
     LLMClient --> RespParser
-    RespParser --> Guard
-    Guard --> Routes
+    RespParser --> GuardOut
+    GuardOut --> Routes
 ```
 
 **Các thành phần chính**
@@ -180,7 +183,7 @@ flowchart TB
 | Thành phần | Nguồn | Vai trò |
 | ---------- | ----- | ------- |
 | API Routes | `api/routes/recommend.py`, `compare.py`, `search.py` | Xử lý HTTP; gọi các factory pipeline từ `api/deps.py` |
-| Guardrails | `src/generation/guardrails.py` | Kiểm tra đầu vào của request và đầu ra của LLM trước khi trả về người dùng |
+| Guardrail đầu vào | `src/guardrails/input/` | Normalize, rồi từ chối (`block` → `HTTP 422`) hoặc sanitize truy vấn thô trước khi vào retrieval |
 | RAG Router | `src/pipeline/rag_router.py` | Phân loại mỗi câu hỏi thành `RECOMMEND` / `COMPARE` / `INFO` / `HYBRID` |
 | UserIntentParser | `src/pipeline/recommend/user_intent_parser.py` | Trích xuất ngân sách, mục đích sử dụng, ưu tiên từ câu hỏi |
 | FilterEngine | `src/retrieval/filter_engine.py` | Trích xuất bộ lọc thương hiệu/danh mục/giá/đánh giá từ văn bản tiếng Việt |
@@ -188,8 +191,12 @@ flowchart TB
 | CrossEncoderReranker | `src/retrieval/reranker.py` | Rerank độ liên quan tùy chọn với `ms-marco-MiniLM-L-6-v2` |
 | ProductScorer | `src/pipeline/recommend/scoring.py` | Chấm điểm đa tiêu chí (độ liên quan, đánh giá, giá trị, độ phổ biến) |
 | SpecAligner / ProductComparator / ComparisonFormatter | `src/pipeline/compare/*.py` | Căn chỉnh thông số, tính khác biệt, dựng bảng so sánh Markdown |
+| Guardrail ngữ cảnh | `src/guardrails/context/` | Sanitize dữ liệu sản phẩm đã truy xuất (bỏ HTML/chỉ dẫn giả mạo, cắt độ dài) trước khi đưa vào prompt |
 | ProductEmbedder | `src/embedding/product_embedder.py` | Chuyển văn bản câu hỏi/sản phẩm thành vector qua OpenAI |
 | LLM Client | `src/generation/llm_client.py` | Giao diện thống nhất cho Anthropic/OpenAI/Gemini |
 | ResponseParser | `src/generation/response_parser.py` | Trích xuất JSON có cấu trúc từ văn bản thô do LLM trả về |
+| Guardrail đầu ra | `src/guardrails/output/`, `src/guardrails/fallback.py` | Validate JSON theo Pydantic schema, grounding từng item với sản phẩm đã truy xuất, và dựng fallback tất định khi thất bại (không gọi lại LLM) |
+
+Module cũ `src/generation/guardrails.py` (class `Guardrails` đơn) đã được thay thế bởi `src/guardrails/` và không còn được pipeline nào gọi tới. Chi tiết đầy đủ ba tầng guardrail: [Guardrail](guardrails.vi.md).
 
 Để xem dữ liệu cụ thể di chuyển qua các thành phần này, xem [Luồng dữ liệu](data-flow.vi.md).

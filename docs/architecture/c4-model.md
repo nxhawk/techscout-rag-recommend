@@ -132,7 +132,7 @@ Zooming into the **Web API** container shows the components that handle a single
 flowchart TB
     subgraph API["Web API container"]
         Routes["API Routes\napi/routes/*.py"]
-        Guard["Guardrails\nsrc/generation/guardrails.py"]
+        GuardIn["Input Guardrail\nsrc/guardrails/input/"]
         Router["RAG Router\nsrc/pipeline/rag_router.py"]
 
         subgraph Rec["Recommend Pipeline"]
@@ -150,15 +150,17 @@ flowchart TB
             Formatter["ComparisonFormatter"]
         end
 
+        GuardCtx["Context Guardrail\nsrc/guardrails/context/"]
         LLMClient["LLM Client\nsrc/generation/llm_client.py"]
         RespParser["ResponseParser\nsrc/generation/response_parser.py"]
+        GuardOut["Output Guardrail\nsrc/guardrails/output/, fallback.py"]
         Embedder["ProductEmbedder\nsrc/embedding/product_embedder.py"]
     end
 
     VDB[("Vector Store")]
     Providers["Anthropic / OpenAI / Gemini"]
 
-    Routes --> Guard --> Router
+    Routes --> GuardIn --> Router
     Router -->|RECOMMEND| IntentP --> FilterE --> Retriever
     Retriever --> Reranker --> Scorer
     Router -->|COMPARE| Extract --> Aligner --> Comparator --> Formatter
@@ -167,12 +169,13 @@ flowchart TB
     Retriever --> Embedder
     Embedder -- "embed()" --> Providers
 
-    Scorer --> LLMClient
-    Formatter --> LLMClient
+    Scorer --> GuardCtx
+    Formatter --> GuardCtx
+    GuardCtx --> LLMClient
     LLMClient -- "generate()" --> Providers
     LLMClient --> RespParser
-    RespParser --> Guard
-    Guard --> Routes
+    RespParser --> GuardOut
+    GuardOut --> Routes
 ```
 
 **Key components**
@@ -180,7 +183,7 @@ flowchart TB
 | Component | Source | Role |
 | --------- | ------ | ---- |
 | API Routes | `api/routes/recommend.py`, `compare.py`, `search.py` | HTTP handlers; call pipeline factories from `api/deps.py` |
-| Guardrails | `src/generation/guardrails.py` | Validates request input and LLM output before it reaches the user |
+| Input Guardrail | `src/guardrails/input/` | Normalizes, then rejects (`block` → `HTTP 422`) or sanitizes the raw query before it reaches retrieval |
 | RAG Router | `src/pipeline/rag_router.py` | Classifies each query as `RECOMMEND` / `COMPARE` / `INFO` / `HYBRID` |
 | UserIntentParser | `src/pipeline/recommend/user_intent_parser.py` | Extracts budget, use case, priorities from the query |
 | FilterEngine | `src/retrieval/filter_engine.py` | Extracts brand/category/price/rating filters from Vietnamese text |
@@ -188,8 +191,12 @@ flowchart TB
 | CrossEncoderReranker | `src/retrieval/reranker.py` | Optional relevance rerank with `ms-marco-MiniLM-L-6-v2` |
 | ProductScorer | `src/pipeline/recommend/scoring.py` | Multi-criteria scoring (relevance, review, value, popularity) |
 | SpecAligner / ProductComparator / ComparisonFormatter | `src/pipeline/compare/*.py` | Align specs, compute differences, render a Markdown comparison table |
+| Context Guardrail | `src/guardrails/context/` | Sanitizes retrieved product text (strip HTML/embedded instructions, truncate) before it's injected into the prompt |
 | ProductEmbedder | `src/embedding/product_embedder.py` | Converts query/product text to vectors via OpenAI |
 | LLM Client | `src/generation/llm_client.py` | Unified interface over Anthropic/OpenAI/Gemini |
 | ResponseParser | `src/generation/response_parser.py` | Extracts structured JSON from the LLM's raw text output |
+| Output Guardrail | `src/guardrails/output/`, `src/guardrails/fallback.py` | Validates the JSON against a Pydantic schema, grounds items against retrieved products, and builds a deterministic fallback on failure (no second LLM call) |
+
+The legacy `src/generation/guardrails.py` (single `Guardrails` class) is superseded by `src/guardrails/` and no longer called by either pipeline. Full breakdown of the three guardrail stages: [Guardrails](guardrails.md).
 
 For the underlying data as it moves through these components, see [Data Flow](data-flow.md).

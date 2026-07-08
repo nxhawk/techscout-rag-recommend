@@ -218,8 +218,9 @@ uv add sentence-transformers
     Luồng compare (`POST /api/compare`) vẫn dùng `ProductRetriever` thuần —
     truy xuất lai hiện chỉ áp dụng cho recommend.
 
-**Tests:** `tests/unit/test_hybrid_search.py` phủ BM25 ranking, tokenize tiếng
-Việt, RRF boosting và đồng bộ filter; `tests/unit/test_es_keyword_search.py`
-phủ dựng query ES và wiring pre-filter; `tests/unit/test_sync_events.py` và
-`tests/unit/test_sync_workers.py` phủ parse sự kiện CDC và cả hai worker
-(re-embed vs metadata-only vs delete, idempotency khi replay snapshot).
+**Tests:** `tests/unit/retrieval/test_hybrid_search.py` phủ BM25 ranking, tokenize tiếng
+Việt, RRF boosting và đồng bộ filter; `tests/unit/retrieval/test_es_keyword_search.py`
+phủ dựng query ES và wiring pre-filter;
+`tests/unit/retrieval/test_es_keyword_search_startup.py` phủ retry khi khởi động ES;
+`tests/unit/sync/test_events.py` và `tests/unit/sync/test_workers.py` phủ parse sự kiện
+CDC và cả hai worker (re-embed vs metadata-only vs delete, idempotency khi replay snapshot).

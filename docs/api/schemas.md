@@ -1,24 +1,32 @@
 # Request & Response Schemas
 
-All schemas are defined as Pydantic models in `api/schemas.py`.
+All schemas are defined as Pydantic models in `api/schemas.py`. Field-level
+constraints here are the first of several [guardrail](../architecture/guardrails.md)
+layers — they reject malformed requests as a plain `422` before any pipeline
+or LLM work happens; deeper rule-based checks (prompt injection, output
+grounding) run inside the pipelines and are documented on the
+[Guardrails](../architecture/guardrails.md) page.
 
 ## Request Models
 
 ### RecommendRequest
 
 ```python
+ALLOWED_FILTER_KEYS = {"brand", "category", "price_min", "price_max", "min_rating", "tags"}
+
 class RecommendRequest(BaseModel):
-    query: str                    # Natural language query
-    top_k: int = 5               # Number of results
-    filters: dict | None = None  # Optional filter overrides
+    query: str = Field(min_length=1, max_length=2000)  # trimmed; blank -> 422
+    top_k: int = Field(default=5, ge=1, le=10)
+    filters: dict | None = None   # keys outside ALLOWED_FILTER_KEYS -> 422
 ```
 
 ### CompareRequest
 
 ```python
 class CompareRequest(BaseModel):
-    query: str | None = None           # NL comparison query
-    product_ids: list[str] | None = None  # Or specific product IDs
+    query: str | None = Field(default=None, max_length=2000)          # trimmed
+    product_ids: list[str] | None = Field(default=None, max_length=5)  # each ^[a-zA-Z0-9_-]{1,64}$, deduped
+    # model-level check: at least one of query / product_ids is required -> 422
 ```
 
 ### SearchRequest
@@ -36,8 +44,9 @@ class SearchRequest(BaseModel):
 
 ```python
 class RecommendResponse(BaseModel):
-    recommendations: list[dict]  # Ranked product list
+    recommendations: list[dict]  # Ranked product list, grounded against retrieved products
     summary: str = ""            # Overall summary
+    warnings: list[str] = []     # Vietnamese notes from any guardrail sanitize/fallback step
 ```
 
 ### CompareResponse
@@ -45,8 +54,9 @@ class RecommendResponse(BaseModel):
 ```python
 class CompareResponse(BaseModel):
     comparison_table: dict       # Aligned specs table
-    analysis: dict               # LLM analysis
+    analysis: dict               # LLM analysis, grounded against compared products
     conclusion: str = ""         # Final verdict
+    warnings: list[str] = []     # Vietnamese notes from any guardrail sanitize/fallback step
 ```
 
 ### SearchResponse

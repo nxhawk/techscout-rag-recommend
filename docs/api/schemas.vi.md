@@ -1,24 +1,32 @@
 # Schema Request & Response
 
 Tất cả schema được định nghĩa dưới dạng Pydantic model trong `api/schemas.py`.
+Các ràng buộc ở tầng field tại đây là lớp [guardrail](../architecture/guardrails.vi.md)
+đầu tiên trong số nhiều lớp — chúng từ chối request sai định dạng bằng một
+`422` đơn giản trước khi bất kỳ pipeline hay LLM nào chạy; các kiểm tra dựa
+trên rule sâu hơn (prompt injection, grounding output) chạy bên trong
+pipeline và được mô tả ở trang [Guardrail](../architecture/guardrails.vi.md).
 
 ## Request Models
 
 ### RecommendRequest
 
 ```python
+ALLOWED_FILTER_KEYS = {"brand", "category", "price_min", "price_max", "min_rating", "tags"}
+
 class RecommendRequest(BaseModel):
-    query: str                    # Truy vấn ngôn ngữ tự nhiên
-    top_k: int = 5               # Số lượng kết quả
-    filters: dict | None = None  # Ghi đè filter tùy chọn
+    query: str = Field(min_length=1, max_length=2000)  # đã trim; rỗng -> 422
+    top_k: int = Field(default=5, ge=1, le=10)
+    filters: dict | None = None   # key ngoài ALLOWED_FILTER_KEYS -> 422
 ```
 
 ### CompareRequest
 
 ```python
 class CompareRequest(BaseModel):
-    query: str | None = None           # Truy vấn so sánh bằng ngôn ngữ tự nhiên
-    product_ids: list[str] | None = None  # Hoặc ID sản phẩm cụ thể
+    query: str | None = Field(default=None, max_length=2000)          # đã trim
+    product_ids: list[str] | None = Field(default=None, max_length=5)  # mỗi ID khớp ^[a-zA-Z0-9_-]{1,64}$, loại trùng
+    # kiểm tra ở tầng model: cần ít nhất một trong query / product_ids -> 422
 ```
 
 ### SearchRequest
@@ -36,8 +44,9 @@ class SearchRequest(BaseModel):
 
 ```python
 class RecommendResponse(BaseModel):
-    recommendations: list[dict]  # Danh sách sản phẩm đã xếp hạng
+    recommendations: list[dict]  # Danh sách sản phẩm đã xếp hạng, grounding với sản phẩm đã truy xuất
     summary: str = ""            # Tóm tắt tổng quan
+    warnings: list[str] = []     # Ghi chú tiếng Việt từ bước sanitize/fallback của guardrail (nếu có)
 ```
 
 ### CompareResponse
@@ -45,8 +54,9 @@ class RecommendResponse(BaseModel):
 ```python
 class CompareResponse(BaseModel):
     comparison_table: dict       # Bảng thông số đã đối chiếu
-    analysis: dict               # Phân tích của LLM
+    analysis: dict               # Phân tích của LLM, grounding với sản phẩm đang so sánh
     conclusion: str = ""         # Kết luận cuối cùng
+    warnings: list[str] = []     # Ghi chú tiếng Việt từ bước sanitize/fallback của guardrail (nếu có)
 ```
 
 ### SearchResponse

@@ -220,8 +220,9 @@ uv add sentence-transformers
     The compare flow (`POST /api/compare`) still uses the plain
     `ProductRetriever` — hybrid retrieval currently applies to recommend only.
 
-**Tests:** `tests/unit/test_hybrid_search.py` covers BM25 ranking, Vietnamese
-tokenization, RRF boosting and filter parity; `tests/unit/test_es_keyword_search.py`
-covers ES query building and the pre-filter wiring; `tests/unit/test_sync_events.py`
-and `tests/unit/test_sync_workers.py` cover CDC event parsing and both workers
-(re-embed vs metadata-only vs delete, snapshot idempotency).
+**Tests:** `tests/unit/retrieval/test_hybrid_search.py` covers BM25 ranking, Vietnamese
+tokenization, RRF boosting and filter parity; `tests/unit/retrieval/test_es_keyword_search.py`
+covers ES query building and the pre-filter wiring;
+`tests/unit/retrieval/test_es_keyword_search_startup.py` covers ES startup retry;
+`tests/unit/sync/test_events.py` and `tests/unit/sync/test_workers.py` cover CDC event
+parsing and both workers (re-embed vs metadata-only vs delete, snapshot idempotency).

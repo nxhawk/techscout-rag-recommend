@@ -81,6 +81,7 @@ plugins:
             Pipeline: Pipeline
             Pipeline Flow: Luồng xử lý
             Hybrid Retrieval: Truy xuất lai
+            Guardrails: Guardrail
             Project Structure: Cấu trúc dự án
             API Reference: Tài liệu API
             Endpoints: Endpoints
@@ -112,6 +113,7 @@ nav:
       - Pipeline: architecture/pipeline.md
       - Pipeline Flow: architecture/pipeline-flow.md
       - Hybrid Retrieval: architecture/hybrid-retrieval.md
+      - Guardrails: architecture/guardrails.md
       - Project Structure: architecture/structure.md
   - Scripts:
       - Overview: scripts/index.md

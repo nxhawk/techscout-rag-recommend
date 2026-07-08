@@ -23,7 +23,7 @@ uv sync --group dev --group docs
 2. Use absolute imports.
 3. Add type hints to all public functions.
 4. Write docstrings in English.
-5. Add unit tests in `tests/unit/`.
+5. Add unit tests in `tests/unit/<domain>/test_<module>.py`, mirroring the module path under `src/` or `api/` (see [Testing](testing.md)).
 6. Update `CLAUDE.md` if the module introduces new patterns.
 
 ## Commit Messages

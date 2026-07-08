@@ -16,33 +16,65 @@ uv run pytest tests/integration/
 uv run pytest tests/ -v
 
 # Run a specific test file
-uv run pytest tests/unit/test_filter_engine.py
+uv run pytest tests/unit/retrieval/test_filter_engine.py
+
+# Run tests for one domain (mirrors src/ or api/)
+uv run pytest tests/unit/api/ -v
+uv run pytest tests/unit/retrieval/ -v
+uv run pytest tests/unit/guardrails/ -v
 ```
 
 ## Test Structure
 
+Unit tests mirror the production layout under `src/` and `api/` so you can find and
+update tests alongside the code they cover:
+
 ```
 tests/
 ├── conftest.py                     # Shared fixtures (sample_product, sample_products)
-├── unit/                           # Fast, isolated tests (no network / secrets)
-│   ├── test_router.py              # RAGRouter query classification
-│   ├── test_chunker.py             # ProductChunker output
-│   ├── test_filter_engine.py       # FilterEngine extraction
-│   ├── test_es_keyword_search.py   # Elasticsearch keyword query building
-│   ├── test_hybrid_search.py       # HybridSearch RRF fusion + filter enforcement
-│   ├── test_vector_store_filters.py # Vector store SQL metadata filters
-│   ├── test_products_api.py        # /api/products CRUD route
-│   ├── test_recommend_route.py     # /api/recommend route
-│   ├── test_sync_events.py         # Debezium event parsing + change detection
-│   └── test_sync_workers.py        # CDC sync workers (SearchIndexer, EmbeddingSyncer)
-└── integration/                    # For services-backed tests (no tests yet)
+├── unit/
+│   ├── api/                        # FastAPI layer (schemas, metrics, routes)
+│   │   ├── conftest.py             # Shared TestClient + dependency override cleanup
+│   │   ├── test_metrics.py
+│   │   ├── test_schemas.py
+│   │   └── routes/
+│   │       ├── test_compare.py     # POST /api/compare
+│   │       ├── test_products.py    # /api/products CRUD
+│   │       └── test_recommend.py   # POST /api/recommend
+│   ├── embedding/
+│   │   └── test_vector_store_filters.py
+│   ├── guardrails/
+│   │   ├── test_input.py           # normalize / injection / heuristic / chain
+│   │   └── test_output.py          # schema validation / grounding / fallback
+│   ├── ingestion/
+│   │   └── test_chunker.py
+│   ├── pipeline/
+│   │   ├── test_compare_pipeline.py
+│   │   ├── test_rag_router.py
+│   │   └── test_recommend_pipeline.py
+│   ├── retrieval/
+│   │   ├── test_es_keyword_search.py
+│   │   ├── test_es_keyword_search_startup.py
+│   │   ├── test_filter_engine.py
+│   │   └── test_hybrid_search.py
+│   ├── sync/
+│   │   ├── test_events.py          # Debezium parsing + change detection
+│   │   └── test_workers.py         # SearchIndexer + EmbeddingSyncer
+│   └── utils/
+│       └── test_retry_with_backoff.py
+└── integration/                    # Service-backed tests (empty today)
 ```
 
-The tests group into: **routing/chunking/filters** (`test_router`, `test_chunker`,
-`test_filter_engine`); **retrieval** (`test_es_keyword_search`, `test_hybrid_search`,
-`test_vector_store_filters`); **API** (`test_products_api`, `test_recommend_route`);
-and **CDC sync** (`test_sync_events`, `test_sync_workers`). `tests/integration/` is
-reserved for tests that need real external services and currently holds no tests.
+**Naming convention:** `tests/unit/<domain>/test_<module>.py` for
+`src/<domain>/<module>.py` or `api/<path>/<module>.py`. Route tests live under
+`tests/unit/api/routes/` to match `api/routes/`.
+
+**Domain-local fixtures:** put shared helpers in a `conftest.py` inside the domain
+folder (for example `tests/unit/api/conftest.py` for the shared `client` fixture).
+Keep cross-domain sample data in the root `tests/conftest.py`.
+
+`tests/integration/` is reserved for tests that need real external services and
+currently holds no tests.
 
 ## Writing Tests
 
@@ -64,13 +96,25 @@ def test_chunker_output(sample_product):
 The CDC layer is tested entirely offline so it runs in CI with **no Kafka, ES, DB,
 secrets, or network**:
 
-- **`test_sync_events.py`** covers Debezium event handling — `parse_debezium_message`,
-  the `content_hash` of the text-bearing fields, `text_changed` detection, and the
-  `metadata_fields` that trigger a metadata-only update rather than a re-embed.
-- **`test_sync_workers.py`** exercises the two workers (`SearchIndexer` and
-  `EmbeddingSyncer`) against **in-memory fakes** (`FakeES`, `FakeVectorStore`,
+- **`tests/unit/sync/test_events.py`** covers Debezium event handling —
+  `parse_debezium_message`, the `content_hash` of the text-bearing fields,
+  `text_changed` detection, and the `metadata_fields` that trigger a
+  metadata-only update rather than a re-embed.
+- **`tests/unit/sync/test_workers.py`** exercises the two workers (`SearchIndexer`
+  and `EmbeddingSyncer`) against **in-memory fakes** (`FakeES`, `FakeVectorStore`,
   `FakeEmbedder`). No real Kafka/ES/DB is involved, so the change-detection logic
   is verified without any live service.
+
+### Adding a test for a new module
+
+1. Create `tests/unit/<domain>/test_<module>.py` next to the matching `src/` or
+   `api/` path.
+2. Mock external services (LLM, Postgres, HTTP) — unit tests must not need
+   network or secrets.
+3. Reuse fixtures from `tests/conftest.py` or add a domain `conftest.py` when
+   several files in the same folder share setup.
+4. Run `uv run pytest tests/unit/<domain>/ -v` while iterating, then
+   `uv run pytest tests/unit` before opening a PR.
 
 ## Evaluation
 

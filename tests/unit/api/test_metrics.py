@@ -1,17 +1,7 @@
 """Unit tests for the Prometheus /metrics endpoint and RAG-specific collectors."""
 
-import pytest
-from fastapi.testclient import TestClient
-
 from api.app import app
 from api.deps import get_cached_recommend_pipeline
-
-
-@pytest.fixture
-def client():
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
 
 
 def test_metrics_endpoint_exposes_prometheus_text(client):

@@ -15,13 +15,16 @@ The `RAGRouter` classifies user queries into four types using regex pattern matc
 
 ```
 Query
+  → Input Guardrail (normalize → heuristics → injection; block → HTTP 422)
   → UserIntentParser (extract use_case, budget, priorities)
   → FilterEngine (extract brand, category, price range)
   → ProductRetriever (hybrid search + metadata filter)
   → CrossEncoderReranker (optional, rerank by relevance)
   → ProductScorer (multi-criteria: relevance, review, value, popularity)
+  → Context Guardrail (sanitize product text before prompting)
   → LLM (generate explanation with recommend_prompt template)
-  → ResponseParser (extract structured JSON)
+  → ResponseParser (extract JSON)
+  → Output Guardrail (schema validate + grounding; fallback on failure)
   → Response
 ```
 
@@ -39,18 +42,27 @@ Configurable per use case in `configs/scoring_weights.yaml`:
 ## Compare Pipeline
 
 ```
-Query
-  → Extract product names from query (or accept product_ids)
-  → ProductRetriever (fetch full product data)
+Query (optional if product_ids given)
+  → Input Guardrail (query only; normalize → heuristics → injection; block → HTTP 422)
+  → Extract product names from query (or accept product_ids, looked up via ProductRepository)
+  → ProductRetriever (fetch full product data; ≥ 2 required, else HTTP 422)
   → SpecAligner (normalize field names, align specs across products)
   → ProductComparator (compare per criterion, find highlights)
   → ComparisonFormatter (generate markdown table)
+  → Context Guardrail (sanitize product text before prompting)
   → LLM (generate analysis with compare_prompt template)
-  → ResponseParser (extract structured JSON)
+  → ResponseParser (extract JSON)
+  → Output Guardrail (schema validate + grounding; fallback on failure)
   → Response
 ```
 
 ## Cross-Cutting Components
+
+### Guardrails
+
+Both pipelines above run three non-LLM guardrail stages inline: an **input guardrail** before retrieval, a **context guardrail** before prompting, and an **output guardrail** (schema validation + grounding, with a deterministic fallback on failure) before returning the response. Full breakdown: [Guardrails](guardrails.md).
+
+**Source:** `src/guardrails/`
 
 ### Hybrid Search
 

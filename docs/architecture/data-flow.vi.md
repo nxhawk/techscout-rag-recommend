@@ -76,8 +76,8 @@ Delivery là at-least-once (commit offset sau khi áp xong) và cả hai applier
 
 | Giai đoạn | Đầu vào | Đầu ra | Định dạng | Nguồn |
 | --------- | ------- | ------ | --------- | ----- |
-| Ingress | HTTP request | Request body đã validate | Pydantic model (`api/schemas.py`) | `api/routes/*.py` |
-| Guardrail đầu vào | Chuỗi query thô | Quyết định pass/reject | bool + lý do | `src/generation/guardrails.py` |
+| Ingress | HTTP request | Request body đã validate | Pydantic model (`api/schemas.py`) — độ dài `query`, khoảng `top_k`, whitelist `filters`, định dạng/số lượng `product_ids` | `api/routes/*.py`, `api/schemas.py` |
+| Guardrail đầu vào | Chuỗi query thô | `GuardrailResult` (`allow`/`sanitize`/`block`) + query đã sanitize | Normalize → heuristic (độ dài/URL/code/ký tự lặp) → regex injection; `block` raise `InputGuardrailBlocked` → `HTTP 422` | `src/guardrails/input/` |
 | Route | Chuỗi query | Loại query | Enum: `RECOMMEND` / `COMPARE` / `INFO` / `HYBRID` | `src/pipeline/rag_router.py` |
 | Parse intent (recommend) | Chuỗi query | Intent | Dict: `budget`, `use_case`, `priorities`, `brand_pref` | `src/pipeline/recommend/user_intent_parser.py` |
 | Trích xuất filter | Chuỗi query | Bộ lọc metadata | Dict: `price_min/max`, `brand`, `category`, `min_rating` | `src/retrieval/filter_engine.py` |
@@ -87,11 +87,14 @@ Delivery là at-least-once (commit offset sau khi áp xong) và cả hai applier
 | Chấm điểm | Candidates + intent | Sản phẩm đã xếp hạng | Danh sách sắp theo `final_score`, cắt còn `top_k` | `src/pipeline/recommend/scoring.py`, `src/retrieval/similarity_scorer.py` |
 | Compare: căn chỉnh | 2+ sản phẩm | Bảng thông số đã căn chỉnh | Dict theo tên thông số đã chuẩn hóa | `src/pipeline/compare/spec_aligner.py` |
 | Compare: định dạng | Thông số đã căn chỉnh | Bảng Markdown | String | `src/pipeline/compare/formatter.py` |
-| Điền prompt | Sản phẩm/bảng + intent | Prompt | String (`SYSTEM_PROMPT` + `USER_PROMPT_TEMPLATE`) | `src/generation/prompt_templates/*.py` |
+| Guardrail ngữ cảnh | Trường sản phẩm đã truy xuất/so sánh (name, brand, document/description) | Giá trị trường đã sanitize | Bỏ HTML/`<script>`, thay câu chứa chỉ dẫn giả mạo, cắt còn `max_context_field_chars` (mặc định 300) | `src/guardrails/context/sanitizer.py` |
+| Điền prompt | Sản phẩm/bảng đã sanitize + intent | Prompt | String (`SYSTEM_PROMPT` + `USER_PROMPT_TEMPLATE`) | `src/generation/prompt_templates/*.py` |
 | Generation | Prompt | Văn bản thô | String (kỳ vọng chứa JSON) | `src/generation/llm_client.py` |
-| Parse response | Văn bản thô | Kết quả có cấu trúc | Dict / Pydantic model | `src/generation/response_parser.py` |
-| Guardrail đầu ra | Kết quả có cấu trúc | Quyết định pass/reject | bool + lý do (kiểm tra JSON sai định dạng, dữ liệu sản phẩm bịa đặt) | `src/generation/guardrails.py` |
-| Egress | Kết quả có cấu trúc | HTTP response | JSON, văn bản tiếng Việt hiển thị cho người dùng | `api/routes/*.py` |
+| Parse response | Văn bản thô | Dict đã parse hoặc `None` | Parse JSON trực tiếp, fallback trích xuất từ markdown-fence | `src/generation/response_parser.py` |
+| Guardrail đầu ra | Dict đã parse | `GuardrailResult` — payload đã validate, hoặc `block` | Validate schema Pydantic (`RecommendLLMOutput`/`CompareLLMOutput`) đúng contract JSON của prompt | `src/guardrails/output/schemas.py`, `validator.py` |
+| Grounding | Item đã validate + sản phẩm đã truy xuất/so sánh | Item đã grounding + `warnings[]` | Loại item có `name` không khớp sản phẩm đã truy xuất/so sánh (không phân biệt hoa/thường, khoảng trắng) | `src/guardrails/output/grounding.py` |
+| Fallback (khi schema thất bại hoặc grounding rỗng) | Sản phẩm đã truy xuất/so sánh | Kết quả có cấu trúc tất định | Dựng từ candidate đã có sẵn — **không gọi lại LLM** | `src/guardrails/fallback.py` |
+| Egress | Kết quả có cấu trúc + `warnings[]` | HTTP response | JSON, văn bản tiếng Việt hiển thị cho người dùng | `api/routes/*.py` |
 
 ## Dữ liệu lưu trữ (data at rest)
 

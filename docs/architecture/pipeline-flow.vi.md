@@ -42,8 +42,14 @@ Pipeline gợi ý tìm các sản phẩm khớp với ý định của người 
 
 ```mermaid
 flowchart LR
+    subgraph Guard0["0. Guardrail đầu vào"]
+        Q0[Query gốc] --> GIN["normalize → heuristics\n→ injection"]
+        GIN -->|block| E422["raise\nInputGuardrailBlocked"]
+        GIN -->|allow / sanitize| Q[Query đã sanitize]
+    end
+
     subgraph Intent["1. Phân tích ý định"]
-        Q[Query] --> IP[UserIntentParser]
+        Q --> IP[UserIntentParser]
         IP --> Intent_Out["budget, use_case,\npriorities, brand_pref"]
     end
 
@@ -69,14 +75,24 @@ flowchart LR
     end
 
     subgraph Generate["4. Sinh phản hồi"]
-        TopK --> PT[Prompt Template]
+        TopK --> GCTX["Guardrail ngữ cảnh\n(sanitize_text_field từng sản phẩm)"]
+        GCTX --> PT[Prompt Template]
         PT --> LLM[LLM Client]
         LLM --> RP[ResponseParser]
-        RP --> Resp[JSON Response]
+        RP --> GOUT["Guardrail đầu ra\n(validate schema + grounding)"]
+        GOUT -->|không hợp lệ / ungrounded| FB["Fallback tất định\n(từ TopK, không gọi lại LLM)"]
+        GOUT -->|hợp lệ & grounded| Resp["JSON Response\n+ warnings[]"]
+        FB --> Resp
     end
 ```
 
 ### Từng bước
+
+**Bước 0 — Guardrail đầu vào**
+
+Trước tiên, truy vấn thô đi qua `GuardrailChain` đầu vào: `NormalizeGuardrail` (bỏ ký tự điều khiển, gộp khoảng trắng) → `HeuristicGuardrail` (kiểm tra rỗng/độ dài/số URL/code block) → `InjectionGuardrail` (regex denylist prompt injection/jailbreak, tiếng Anh + tiếng Việt). Kết quả `block` sẽ raise `InputGuardrailBlocked`, route map thành `HTTP 422` kèm lý do tiếng Việt — retrieval và LLM không bao giờ được chạm tới. Kết quả `sanitize` (vd gộp ký tự lặp) chỉ thay thế text của query rồi xử lý tiếp tục.
+
+**Nguồn:** `src/guardrails/input/`, `src/pipeline/recommend_pipeline.py`
 
 **Bước 1 — Phân tích ý định người dùng**
 
@@ -119,9 +135,11 @@ Sản phẩm được sắp xếp giảm dần theo `final_score` và cắt còn
 
 **Bước 4 — Sinh phản hồi bằng LLM**
 
-Các sản phẩm hàng đầu được định dạng thành chuỗi ngữ cảnh (tên, thương hiệu, giá, rating, điểm — các trường này lấy từ metadata của chunk được ghi lúc ingest) và chèn vào prompt template cùng ý định đã phân tích. LLM được gọi ở **JSON mode gốc** (Gemini `response_mime_type: application/json`, OpenAI `response_format: json_object`) nên trả về JSON chuẩn, không có đoạn văn mở đầu. `ResponseParser` parse thành `recommendations` + `summary`; nếu parse thất bại, nguyên văn text được trả về làm `summary` dự phòng.
+Các sản phẩm hàng đầu trước tiên đi qua **guardrail ngữ cảnh** (`sanitize_text_field()` — bỏ HTML/script và các câu chứa chỉ dẫn giả mạo, cắt độ dài từng trường), sau đó được định dạng thành chuỗi ngữ cảnh (tên, thương hiệu, giá, rating, điểm — các trường này lấy từ metadata của chunk được ghi lúc ingest) và chèn vào prompt template cùng ý định đã phân tích. LLM được gọi ở **JSON mode gốc** (Gemini `response_mime_type: application/json`, OpenAI `response_format: json_object`) nên trả về JSON chuẩn, không có đoạn văn mở đầu.
 
-**Nguồn:** `src/pipeline/recommend_pipeline.py`, `src/generation/prompt_templates/recommend_prompt.py`
+Văn bản thô sau đó đi qua **guardrail đầu ra**: `ResponseParser` trích xuất JSON (trực tiếp hoặc từ markdown-fence), validate theo `RecommendLLMOutput` (Pydantic), rồi mỗi `name` trong danh sách gợi ý được **grounding** với sản phẩm đã truy xuất (item không khớp bị loại). Nếu validate thất bại, hoặc grounding làm rỗng danh sách, pipeline rơi về phản hồi tất định dựng từ `TopK` sản phẩm đã chấm điểm — **không gọi lại LLM**. Dù theo hướng nào, API vẫn trả `200`; danh sách `warnings[]` giải thích những gì đã bị sanitize, loại bỏ, hoặc thay thế. Xem [Guardrail](guardrails.vi.md) để biết cơ chế đầy đủ.
+
+**Nguồn:** `src/pipeline/recommend_pipeline.py`, `src/generation/prompt_templates/recommend_prompt.py`, `src/guardrails/`
 
 ---
 
@@ -131,12 +149,18 @@ Pipeline so sánh truy xuất thông số của nhiều sản phẩm và sinh ph
 
 ```mermaid
 flowchart LR
+    subgraph Guard0["0. Guardrail đầu vào (chỉ khi có query)"]
+        Q0[Query, nếu có] --> GIN["normalize → heuristics\n→ injection"]
+        GIN -->|block| E422["raise\nInputGuardrailBlocked"]
+        GIN -->|allow / sanitize| Q[Query đã sanitize]
+    end
+
     subgraph Extract["1. Lấy sản phẩm"]
-        Q[Query] --> EX{Có cung cấp\nproduct_ids?}
-        EX -->|Có| Lookup[Tra cứu theo ID]
+        Q --> EX{Có cung cấp\nproduct_ids?}
+        EX -->|Có| Lookup["Tra cứu theo ID\n(ProductRepository)"]
         EX -->|Không| Search[Truy xuất từ query]
         Lookup --> Products
-        Search --> Products["Danh sách sản phẩm\n≥ 2 yêu cầu"]
+        Search --> Products["Danh sách sản phẩm\n(max_compare_products,\n≥ 2 yêu cầu)"]
     end
 
     subgraph Compare["2. So sánh"]
@@ -148,24 +172,34 @@ flowchart LR
     end
 
     subgraph Analyze["3. Phân tích bằng LLM"]
-        Table --> PT[Prompt Template]
-        Products --> PT
+        Table --> GCTX["Guardrail ngữ cảnh\n(sanitize_text_field từng sản phẩm)"]
+        Products --> GCTX
+        GCTX --> PT[Prompt Template]
         PT --> LLM[LLM Client]
         LLM --> RP[ResponseParser]
-        RP --> Resp["JSON Response\n(bảng + phân tích)"]
+        RP --> GOUT["Guardrail đầu ra\n(validate schema + grounding)"]
+        GOUT -->|không hợp lệ / ungrounded| FB["Fallback tất định\n(từ Products, không gọi lại LLM)"]
+        GOUT -->|hợp lệ & grounded| Resp["JSON Response\n(bảng + phân tích)\n+ warnings[]"]
+        FB --> Resp
     end
 ```
 
 ### Từng bước
 
+**Bước 0 — Guardrail đầu vào**
+
+Chỉ chạy khi có `query` dạng văn bản tự do (request chỉ có `product_ids` thì không có query để kiểm tra). Dùng cùng `GuardrailChain` như recommend pipeline: normalize → heuristics → injection. Kết quả `block` sẽ raise `InputGuardrailBlocked` → `HTTP 422`.
+
+**Nguồn:** `src/guardrails/input/`, `src/pipeline/compare_pipeline.py`
+
 **Bước 1 — Lấy sản phẩm**
 
 Hai đường dẫn tùy theo lời gọi API:
 
-- **Có `product_ids`** — tra cứu trực tiếp sản phẩm từ database.
+- **Có `product_ids`** — tra cứu từng id qua `ProductRepository` (catalog source-of-truth).
 - **Không có `product_ids`** — dùng `ProductRetriever` để tìm sản phẩm được nhắc đến trong truy vấn, sau đó lấy top 3.
 
-Cần tối thiểu 2 sản phẩm; nếu không pipeline sẽ trả về lỗi.
+Danh sách kết quả bị giới hạn tối đa `GuardrailConfig.max_compare_products` (mặc định 5). Cần tối thiểu 2 sản phẩm; nếu không pipeline trả về `{"error": "Cần ít nhất 2 sản phẩm để so sánh."}`, route map thành `HTTP 422`.
 
 **Bước 2 — So sánh thông số kỹ thuật**
 
@@ -179,9 +213,11 @@ Cần tối thiểu 2 sản phẩm; nếu không pipeline sẽ trả về lỗi.
 
 **Bước 3 — Phân tích bằng LLM**
 
-Bảng so sánh và mô tả sản phẩm được chèn vào prompt template. LLM tạo ra phân tích chi tiết bằng tiếng Việt bao gồm điểm mạnh, điểm yếu, và khuyến nghị cuối cùng dựa trên mục đích sử dụng. Phản hồi bao gồm cả bảng có cấu trúc lẫn phần phân tích tường thuật.
+Mô tả sản phẩm đi qua **guardrail ngữ cảnh** (`sanitize_text_field()`) trước khi được chèn vào prompt template cùng bảng so sánh. LLM tạo ra phân tích chi tiết bằng tiếng Việt bao gồm điểm mạnh, điểm yếu, và khuyến nghị cuối cùng dựa trên mục đích sử dụng.
 
-**Nguồn:** `src/pipeline/compare_pipeline.py`, `src/generation/prompt_templates/compare_prompt.py`
+Phản hồi thô sau đó đi qua **guardrail đầu ra**: parse và validate theo `CompareLLMOutput` (Pydantic), rồi mỗi `product_analysis[].name` được **grounding** với các sản phẩm thực sự đang so sánh (item không khớp bị loại). Khi schema thất bại hoặc kết quả grounding rỗng, pipeline rơi về phân tích tất định dựng từ bảng so sánh — **không gọi lại LLM**. Phản hồi luôn bao gồm cả bảng có cấu trúc lẫn phần phân tích tường thuật, cộng thêm danh sách `warnings[]`. Xem [Guardrail](guardrails.vi.md).
+
+**Nguồn:** `src/pipeline/compare_pipeline.py`, `src/generation/prompt_templates/compare_prompt.py`, `src/guardrails/`
 
 ---
 
@@ -247,12 +283,9 @@ Bật qua `use_reranker: true` trong `configs/settings.yaml` (cần `uv add sent
 
 ### Guardrails
 
-Module `Guardrails` validate cả input lẫn output:
+Cả hai pipeline đều chạy ba tầng guardrail không dùng LLM: **guardrail đầu vào** (normalize → heuristics → injection denylist) từ chối hoặc làm sạch truy vấn thô trước khi truy xuất; **guardrail ngữ cảnh** sanitize dữ liệu sản phẩm đã truy xuất (bỏ HTML, bỏ chỉ dẫn giả mạo, cắt độ dài) trước khi đưa vào prompt; **guardrail đầu ra** validate JSON của LLM theo Pydantic schema và **grounding** từng item với sản phẩm đã truy xuất/so sánh, rơi về phản hồi tất định (không gọi lại LLM) khi thất bại. Xem [Guardrail](guardrails.vi.md) để biết đầy đủ contract, cấu trúc package, và cách mở rộng.
 
-- **Validate input** — kiểm tra độ dài truy vấn, phát hiện các nỗ lực prompt injection
-- **Validate output** — đảm bảo phản hồi LLM là JSON hợp lệ và không chứa dữ liệu sản phẩm bịa đặt (hallucination)
-
-**Nguồn:** `src/generation/guardrails.py`
+**Nguồn:** `src/guardrails/`
 
 ### LLM Client
 
@@ -313,11 +346,14 @@ flowchart TD
     end
 
     subgraph Runtime["Xử lý truy vấn (online)"]
-        USER["Truy vấn người dùng\n(tiếng Việt)"] --> GUARD_IN[Guardrails\nkiểm tra input]
+        USER["Truy vấn người dùng\n(tiếng Việt)"] --> GUARD_IN["Guardrail đầu vào\n(normalize/heuristics/injection)"]
+        GUARD_IN -->|block| E422["HTTP 422"]
         GUARD_IN --> ROUTER[RAG Router]
         ROUTER --> PIPELINE["Recommend / Compare\nPipeline"]
-        PIPELINE --> GUARD_OUT[Guardrails\nkiểm tra output]
-        GUARD_OUT --> API["JSON Response"]
+        PIPELINE --> GUARD_CTX["Guardrail ngữ cảnh\n(sanitize dữ liệu sản phẩm)"]
+        GUARD_CTX --> LLMCALL[LLM Client]
+        LLMCALL --> GUARD_OUT["Guardrail đầu ra\n(schema + grounding,\nfallback khi thất bại)"]
+        GUARD_OUT --> API["JSON Response\n+ warnings[]"]
     end
 
     STORE -.->|"semantic search"| PIPELINE

@@ -26,9 +26,13 @@ lời giải thích bằng tiếng Việt (do LLM viết) về lý do mỗi sả
 
 | Trường    | Kiểu   | Bắt buộc | Mặc định | Mô tả                    |
 | --------- | ------ | -------- | ------- | ------------------------------ |
-| `query`   | string | Có      | —       | Truy vấn sản phẩm bằng ngôn ngữ tự nhiên (tiếng Việt hoặc tiếng Anh) |
-| `top_k`   | int    | Không       | 5       | Số lượng gợi ý      |
-| `filters` | object | Không       | null    | Dành cho tương lai — hiện tại filter được trích xuất tự động từ `query` bởi `FilterEngine` |
+| `query`   | string | Có      | —       | Truy vấn sản phẩm bằng ngôn ngữ tự nhiên (tiếng Việt hoặc tiếng Anh). 1–2000 ký tự, chỉ toàn khoảng trắng sẽ bị từ chối |
+| `top_k`   | int    | Không       | 5       | Số lượng gợi ý. Phải trong khoảng 1–10 |
+| `filters` | object | Không       | null    | Dành cho tương lai — hiện tại filter được trích xuất tự động từ `query` bởi `FilterEngine`. Chỉ chấp nhận các key trong whitelist: `brand`, `category`, `price_min`, `price_max`, `min_rating`, `tags` — key khác sẽ trả về `422` |
+
+Ngoài các kiểm tra ở tầng field, `query` còn đi qua [guardrail đầu vào](../architecture/guardrails.vi.md)
+(normalize → heuristic độ dài/URL/code → denylist prompt injection) trước khi
+vào bước truy xuất.
 
 Các filter được trích xuất từ truy vấn và áp dụng **ngay tại tầng vector
 store** (sản phẩm không đạt sẽ không bao giờ đến được LLM):
@@ -50,10 +54,11 @@ curl -X POST http://localhost:8000/api/recommend \
 
 **Response:**
 
-| Trường            | Kiểu   | Mô tả                                              |
-| ----------------- | ------ | -------------------------------------------------- |
-| `recommendations` | array  | Danh sách sản phẩm đã xếp hạng kèm lý do (xem bên dưới) |
-| `summary`         | string | Tóm tắt chung về các gợi ý (tiếng Việt)            |
+| Trường            | Kiểu     | Mô tả                                              |
+| ----------------- | -------- | -------------------------------------------------- |
+| `recommendations` | array    | Danh sách sản phẩm đã xếp hạng kèm lý do (xem bên dưới) |
+| `summary`         | string   | Tóm tắt chung về các gợi ý (tiếng Việt)            |
+| `warnings`        | string[] | Ghi chú tiếng Việt về những gì guardrail đã sanitize, loại bỏ hoặc thay thế (rỗng nếu không có gì xảy ra) |
 
 ```json
 {
@@ -67,20 +72,26 @@ curl -X POST http://localhost:8000/api/recommend \
       "best_for": "Photography enthusiasts on a budget"
     }
   ],
-  "summary": "Top picks based on camera quality within your budget"
+  "summary": "Top picks based on camera quality within your budget",
+  "warnings": []
 }
 ```
 
 LLM được gọi ở chế độ **JSON mode gốc** (Gemini `response_mime_type`,
 OpenAI `response_format`) nên output luôn là JSON parse được, không có đoạn
-văn mở đầu. Trường hợp hiếm khi parse vẫn thất bại, `recommendations` sẽ rỗng
-và `summary` chứa nguyên văn câu trả lời của LLM (cơ chế dự phòng).
+văn mở đầu. Response sau đó đi qua [guardrail đầu ra](../architecture/guardrails.vi.md):
+được validate theo schema Pydantic và mỗi gợi ý được **grounding** đối chiếu
+với sản phẩm đã truy xuất (tên sản phẩm bị LLM "bịa" sẽ bị loại bỏ). Nếu
+validate thất bại hoặc không còn gợi ý nào sau grounding, endpoint vẫn trả về
+`200` với một fallback tất định dựng từ các sản phẩm xếp hạng cao nhất —
+không bao giờ trả lỗi — và `warnings` giải thích chuyện gì đã xảy ra.
 
 **Lỗi:**
 
 | Status | Thông báo `detail` | Ý nghĩa |
 | ------ | ------------------ | ------- |
-| `422`  | (FastAPI validation) | Request body không hợp lệ (ví dụ thiếu `query`) |
+| `422`  | (FastAPI validation) | Request body không hợp lệ — `query` thiếu/rỗng/quá dài, `top_k` ngoài khoảng `1..10`, hoặc `filters` có key lạ |
+| `422`  | Lý do tiếng Việt cụ thể của guardrail (ví dụ *"Yêu cầu chứa nội dung nghi vấn prompt injection/jailbreak."*) | [Guardrail đầu vào](../architecture/guardrails.vi.md) từ chối truy vấn (prompt injection, độ dài/URL/code bất thường) |
 | `503`  | "Hệ thống đã hết hạn mức gọi AI…" | Hết quota LLM/embedding provider (429). API fail fast — không ngủ chờ quota — và log tóm tắt 1 dòng |
 | `503`  | "Hệ thống gợi ý đang gặp sự cố…" | Sự cố pipeline khác (không kết nối được vector DB, lỗi provider…). Traceback đầy đủ được log phía server |
 
@@ -103,13 +114,20 @@ sequenceDiagram
     Note over D: Lần gọi đầu tiên khởi tạo pipeline<br/>(embedder + vector store + LLM client),<br/>sau đó được cache bằng lru_cache
     D-->>A: RecommendPipeline
     A->>P: run(query, top_k)
+    P->>P: Guardrail đầu vào (normalize/heuristics/injection)<br/>block → raise InputGuardrailBlocked
     P->>P: Phân tích ý định (ngân sách, mục đích, ưu tiên)
     P->>V: Tìm kiếm vector + filter SQL:<br/>khoảng giá, thương hiệu, danh mục (top_k × 3)
     P->>P: Chấm điểm & xếp hạng, giữ lại top_k
+    P->>P: Guardrail ngữ cảnh (sanitize dữ liệu sản phẩm)
     P->>L: Prompt kèm ý định + ngữ cảnh sản phẩm<br/>(JSON mode gốc)
     L-->>P: Câu trả lời JSON chuẩn (tiếng Việt)
-    P-->>A: {recommendations, summary}
-    A-->>C: 200 RecommendResponse
+    P->>P: Guardrail đầu ra (validate schema + grounding,<br/>fallback khi thất bại)
+    P-->>A: {recommendations, summary, warnings}
+    alt guardrail đầu vào chặn
+        A-->>C: 422 (lý do tiếng Việt)
+    else
+        A-->>C: 200 RecommendResponse
+    end
 ```
 
 Các chi tiết triển khai quan trọng:
@@ -137,7 +155,7 @@ Các chi tiết triển khai quan trọng:
    hoặc `GEMINI_API_KEY_1=...`) và tự động xoay key khi gặp lỗi rate limit.
 
 Về các bước bên trong pipeline (phân tích ý định, truy xuất, chấm điểm, sinh
-câu trả lời) xem [Luồng xử lý](../architecture/pipeline-flow.md#recommend-pipeline).
+câu trả lời) xem [Luồng xử lý](../architecture/pipeline-flow.vi.md#recommend-pipeline).
 
 **Điều kiện tiên quyết:** dữ liệu sản phẩm phải được nạp vào vector store
 trước (`uv run python scripts/ingest.py`), và API key của embedding/LLM
@@ -155,10 +173,13 @@ So sánh hai hoặc nhiều sản phẩm cạnh nhau.
 
 | Trường         | Kiểu     | Bắt buộc | Mô tả                         |
 | ------------- | -------- | -------- | ----------------------------------- |
-| `query`       | string   | Không       | Truy vấn so sánh bằng ngôn ngữ tự nhiên   |
-| `product_ids` | string[] | Không       | ID sản phẩm cụ thể cần so sánh     |
+| `query`       | string   | Không       | Truy vấn so sánh bằng ngôn ngữ tự nhiên. 0–2000 ký tự |
+| `product_ids` | string[] | Không       | ID sản phẩm cụ thể cần so sánh, tra cứu qua bảng catalog (source of truth). Tối đa 5, mỗi ID khớp `[a-zA-Z0-9_-]{1,64}`, ID trùng lặp bị loại bỏ |
 
-Cung cấp `query` hoặc `product_ids` (cần ít nhất một trong hai).
+Cung cấp `query` hoặc `product_ids` — cần ít nhất một trong hai (`422` nếu
+thiếu cả hai). `query` cũng đi qua cùng [guardrail đầu vào](../architecture/guardrails.vi.md)
+như `/api/recommend`; chỉ dùng `product_ids` thì bỏ qua bước kiểm tra này
+(không có truy vấn dạng text tự do để validate).
 
 **Ví dụ:**
 
@@ -170,6 +191,13 @@ curl -X POST http://localhost:8000/api/compare \
 
 **Response:**
 
+| Trường              | Kiểu     | Mô tả                                        |
+| ------------------- | -------- | --------------------------------------------------- |
+| `comparison_table`  | object   | Bảng thông số đã đối chiếu (output của `SpecAligner`) |
+| `analysis`          | object   | Phân tích của LLM: `criteria_comparison`, `product_analysis` |
+| `conclusion`        | string   | Kết luận cuối cùng (tiếng Việt)                      |
+| `warnings`          | string[] | Ghi chú tiếng Việt về những gì guardrail đã sanitize, loại bỏ hoặc thay thế |
+
 ```json
 {
   "comparison_table": {
@@ -180,9 +208,30 @@ curl -X POST http://localhost:8000/api/compare \
     "criteria_comparison": [...],
     "product_analysis": [...]
   },
-  "conclusion": "Summary of which product suits which use case"
+  "conclusion": "Summary of which product suits which use case",
+  "warnings": []
 }
 ```
+
+Cơ chế [guardrail đầu ra](../architecture/guardrails.vi.md) tương tự
+`/api/recommend`: JSON của LLM được validate theo schema và mỗi
+`product_analysis[].name` được grounding đối chiếu với các sản phẩm thực sự
+đang so sánh. Nếu thất bại, endpoint vẫn trả về `200` với fallback tất định
+dựng từ bảng so sánh — không bao giờ trả lỗi.
+
+**Lỗi:**
+
+| Status | Thông báo `detail` | Ý nghĩa |
+| ------ | ------------------ | ------- |
+| `422`  | (FastAPI validation) | Request body không hợp lệ — thiếu cả `query` lẫn `product_ids`, `product_ids` sai định dạng/quá nhiều, hoặc `query` quá dài |
+| `422`  | Lý do tiếng Việt cụ thể của guardrail | [Guardrail đầu vào](../architecture/guardrails.vi.md) từ chối `query` (prompt injection, độ dài/URL/code bất thường) |
+| `422`  | "Cần ít nhất 2 sản phẩm để so sánh." | Không đủ 2 sản phẩm được xác định từ `product_ids`/`query` |
+| `503`  | "Hệ thống đã hết hạn mức gọi AI…" | Hết quota LLM/embedding provider (429) |
+| `503`  | "Hệ thống so sánh đang gặp sự cố…" | Sự cố pipeline khác (không kết nối được vector DB, lỗi provider…) |
+
+**Điều kiện tiên quyết:** giống `/api/recommend` — sản phẩm phải được nạp
+trước, và tra cứu `product_ids` cần bảng catalog (`product_catalog`) đã có dữ
+liệu (qua API CRUD hoặc `scripts/ingest.py`).
 
 ## Tìm kiếm sản phẩm
 

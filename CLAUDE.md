@@ -69,11 +69,22 @@ rag-product-recommend/
 │   ├── generation/             # LLM generation
 │   │   ├── llm_client.py       #   Multi-provider (Anthropic, OpenAI)
 │   │   ├── response_parser.py  #   Parse JSON from LLM output
-│   │   ├── guardrails.py       #   Input/output validation
+│   │   ├── guardrails.py       #   Legacy input/output helper (superseded by src/guardrails/)
 │   │   └── prompt_templates/
 │   │       ├── recommend_prompt.py
 │   │       ├── compare_prompt.py
 │   │       └── review_summary_prompt.py
+│   │
+│   ├── guardrails/              # Non-LLM guardrails (input/context/output) - see GUARDRAIL_PLAN.md
+│   │   ├── types.py             #   GuardrailAction, GuardrailResult (allow/sanitize/block contract)
+│   │   ├── base.py              #   BaseGuardrail (ABC), GuardrailChain
+│   │   ├── config.py            #   GuardrailConfig - all thresholds in one place
+│   │   ├── exceptions.py        #   InputGuardrailBlocked
+│   │   ├── logging_utils.py     #   Structured guardrail=... log helper
+│   │   ├── fallback.py          #   Deterministic no-LLM fallback responses
+│   │   ├── input/                #   normalize / injection / heuristics -> build_input_chain()
+│   │   ├── context/              #   sanitize_text_field() for retrieved product text
+│   │   └── output/               #   RecommendLLMOutput/CompareLLMOutput schemas, validator, grounding
 │   │
 │   ├── pipeline/               # Orchestration layer
 │   │   ├── rag_router.py       #   Classify query → pipeline
@@ -150,6 +161,11 @@ rag-product-recommend/
 - **Prompt templates**: Stored as module-level constants (`SYSTEM_PROMPT`, `USER_PROMPT_TEMPLATE`) in `src/generation/prompt_templates/`.
 - **API dependencies**: Use factory functions in `api/deps.py` (e.g. `get_retriever()`, `get_llm_client()`).
 - **User-facing text**: Vietnamese. Code/comments/docstrings: English.
+- **Guardrails**: Non-LLM input/context/output validation lives in `src/guardrails/` (see
+  `GUARDRAIL_PLAN.md`). Both `RecommendPipeline` and `ComparePipeline` run the input chain first
+  (raises `InputGuardrailBlocked`, mapped to HTTP 422 in the routes), sanitize retrieved product
+  text before prompting, then validate + ground the LLM's JSON output before returning it - on
+  any output failure they fall back to a deterministic response instead of calling the LLM again.
 
 ## CI / Workflow Compliance (MANDATORY)
 

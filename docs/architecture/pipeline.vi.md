@@ -15,13 +15,16 @@
 
 ```
 Query
+  → Guardrail đầu vào (normalize → heuristics → injection; block → HTTP 422)
   → UserIntentParser (trích xuất use_case, budget, priorities)
   → FilterEngine (trích xuất brand, category, price range)
   → ProductRetriever (hybrid search + metadata filter)
   → CrossEncoderReranker (tùy chọn, rerank theo độ liên quan)
   → ProductScorer (đa tiêu chí: relevance, review, value, popularity)
+  → Guardrail ngữ cảnh (sanitize dữ liệu sản phẩm trước khi vào prompt)
   → LLM (sinh giải thích bằng template recommend_prompt)
-  → ResponseParser (trích xuất JSON có cấu trúc)
+  → ResponseParser (trích xuất JSON)
+  → Guardrail đầu ra (validate schema + grounding; fallback khi thất bại)
   → Response
 ```
 
@@ -39,18 +42,27 @@ Có thể cấu hình theo từng use case trong `configs/scoring_weights.yaml`:
 ## Compare Pipeline
 
 ```
-Query
-  → Trích xuất tên sản phẩm từ query (hoặc nhận product_ids)
-  → ProductRetriever (lấy đầy đủ dữ liệu sản phẩm)
+Query (tùy chọn nếu đã có product_ids)
+  → Guardrail đầu vào (chỉ khi có query; normalize → heuristics → injection; block → HTTP 422)
+  → Trích xuất tên sản phẩm từ query (hoặc nhận product_ids, tra cứu qua ProductRepository)
+  → ProductRetriever (lấy đầy đủ dữ liệu sản phẩm; cần ≥ 2, nếu không → HTTP 422)
   → SpecAligner (chuẩn hóa tên trường, đối chiếu thông số giữa các sản phẩm)
   → ProductComparator (so sánh theo từng tiêu chí, tìm điểm nổi bật)
   → ComparisonFormatter (sinh bảng markdown)
+  → Guardrail ngữ cảnh (sanitize dữ liệu sản phẩm trước khi vào prompt)
   → LLM (sinh phân tích bằng template compare_prompt)
-  → ResponseParser (trích xuất JSON có cấu trúc)
+  → ResponseParser (trích xuất JSON)
+  → Guardrail đầu ra (validate schema + grounding; fallback khi thất bại)
   → Response
 ```
 
 ## Các thành phần dùng chung (Cross-Cutting)
+
+### Guardrails
+
+Cả hai pipeline ở trên đều chạy ba tầng guardrail không dùng LLM ngay trong luồng: **guardrail đầu vào** trước khi truy xuất, **guardrail ngữ cảnh** trước khi đưa vào prompt, và **guardrail đầu ra** (validate schema + grounding, kèm fallback tất định khi thất bại) trước khi trả phản hồi. Chi tiết đầy đủ: [Guardrail](guardrails.vi.md).
+
+**Nguồn:** `src/guardrails/`
 
 ### Hybrid Search
 

@@ -16,33 +16,64 @@ uv run pytest tests/integration/
 uv run pytest tests/ -v
 
 # Chạy một file test cụ thể
-uv run pytest tests/unit/test_filter_engine.py
+uv run pytest tests/unit/retrieval/test_filter_engine.py
+
+# Chạy test theo domain (phản chiếu src/ hoặc api/)
+uv run pytest tests/unit/api/ -v
+uv run pytest tests/unit/retrieval/ -v
+uv run pytest tests/unit/guardrails/ -v
 ```
 
 ## Cấu trúc Test
 
+Unit test được tổ chức theo layout production dưới `src/` và `api/` để dễ tìm và
+cập nhật test cùng lúc với code:
+
 ```
 tests/
 ├── conftest.py                     # Fixture dùng chung (sample_product, sample_products)
-├── unit/                           # Test nhanh, độc lập (không cần network / secrets)
-│   ├── test_router.py              # Phân loại truy vấn của RAGRouter
-│   ├── test_chunker.py             # Output của ProductChunker
-│   ├── test_filter_engine.py       # Trích xuất của FilterEngine
-│   ├── test_es_keyword_search.py   # Dựng truy vấn keyword Elasticsearch
-│   ├── test_hybrid_search.py       # Fusion RRF + áp filter của HybridSearch
-│   ├── test_vector_store_filters.py # Filter metadata SQL của vector store
-│   ├── test_products_api.py        # Route CRUD /api/products
-│   ├── test_recommend_route.py     # Route /api/recommend
-│   ├── test_sync_events.py         # Parse event Debezium + phát hiện thay đổi
-│   └── test_sync_workers.py        # Các CDC sync worker (SearchIndexer, EmbeddingSyncer)
-└── integration/                    # Dành cho test cần dịch vụ ngoài (chưa có test)
+├── unit/
+│   ├── api/                        # Tầng FastAPI (schema, metrics, routes)
+│   │   ├── conftest.py             # TestClient dùng chung + dọn dependency override
+│   │   ├── test_metrics.py
+│   │   ├── test_schemas.py
+│   │   └── routes/
+│   │       ├── test_compare.py     # POST /api/compare
+│   │       ├── test_products.py    # CRUD /api/products
+│   │       └── test_recommend.py   # POST /api/recommend
+│   ├── embedding/
+│   │   └── test_vector_store_filters.py
+│   ├── guardrails/
+│   │   ├── test_input.py           # normalize / injection / heuristic / chain
+│   │   └── test_output.py          # schema validation / grounding / fallback
+│   ├── ingestion/
+│   │   └── test_chunker.py
+│   ├── pipeline/
+│   │   ├── test_compare_pipeline.py
+│   │   ├── test_rag_router.py
+│   │   └── test_recommend_pipeline.py
+│   ├── retrieval/
+│   │   ├── test_es_keyword_search.py
+│   │   ├── test_es_keyword_search_startup.py
+│   │   ├── test_filter_engine.py
+│   │   └── test_hybrid_search.py
+│   ├── sync/
+│   │   ├── test_events.py          # Parse Debezium + phát hiện thay đổi
+│   │   └── test_workers.py         # SearchIndexer + EmbeddingSyncer
+│   └── utils/
+│       └── test_retry_with_backoff.py
+└── integration/                    # Test cần dịch vụ ngoài (hiện chưa có)
 ```
 
-Các test được nhóm thành: **routing/chunking/filter** (`test_router`, `test_chunker`,
-`test_filter_engine`); **retrieval** (`test_es_keyword_search`, `test_hybrid_search`,
-`test_vector_store_filters`); **API** (`test_products_api`, `test_recommend_route`);
-và **CDC sync** (`test_sync_events`, `test_sync_workers`). `tests/integration/` dành
-cho các test cần dịch vụ ngoài thật và hiện chưa có test nào.
+**Quy ước đặt tên:** `tests/unit/<domain>/test_<module>.py` tương ứng với
+`src/<domain>/<module>.py` hoặc `api/<path>/<module>.py`. Test route nằm trong
+`tests/unit/api/routes/` để khớp `api/routes/`.
+
+**Fixture theo domain:** đặt helper dùng chung trong `conftest.py` của domain đó
+(ví dụ `tests/unit/api/conftest.py` cho fixture `client`). Dữ liệu mẫu dùng chéo
+domain giữ ở `tests/conftest.py` gốc.
+
+`tests/integration/` dành cho test cần dịch vụ ngoài thật và hiện chưa có test.
 
 ## Viết Test
 
@@ -64,13 +95,25 @@ def test_chunker_output(sample_product):
 Tầng CDC được test hoàn toàn offline nên chạy được trong CI mà **không cần Kafka,
 ES, DB, secrets hay network**:
 
-- **`test_sync_events.py`** phủ phần xử lý event Debezium — `parse_debezium_message`,
-  `content_hash` của các trường chứa văn bản, phát hiện `text_changed`, và các
-  `metadata_fields` kích hoạt cập nhật metadata-only thay vì re-embed.
-- **`test_sync_workers.py`** kiểm thử hai worker (`SearchIndexer` và
+- **`tests/unit/sync/test_events.py`** phủ xử lý event Debezium —
+  `parse_debezium_message`, `content_hash` của các trường chứa văn bản, phát hiện
+  `text_changed`, và các `metadata_fields` kích hoạt cập nhật metadata-only thay vì
+  re-embed.
+- **`tests/unit/sync/test_workers.py`** kiểm thử hai worker (`SearchIndexer` và
   `EmbeddingSyncer`) dựa trên **fakes trong bộ nhớ** (`FakeES`, `FakeVectorStore`,
   `FakeEmbedder`). Không dùng Kafka/ES/DB thật, nên logic phát hiện thay đổi được
   kiểm chứng mà không cần dịch vụ chạy thật.
+
+### Thêm test cho module mới
+
+1. Tạo `tests/unit/<domain>/test_<module>.py` cạnh đường dẫn `src/` hoặc `api/`
+   tương ứng.
+2. Mock dịch vụ ngoài (LLM, Postgres, HTTP) — unit test không được cần network
+   hay secrets.
+3. Tái sử dụng fixture từ `tests/conftest.py`, hoặc thêm `conftest.py` trong
+   domain khi nhiều file cùng folder dùng chung setup.
+4. Chạy `uv run pytest tests/unit/<domain>/ -v` khi đang sửa, rồi
+   `uv run pytest tests/unit` trước khi mở PR.
 
 ## Đánh giá (Evaluation)
 

@@ -240,4 +240,24 @@ def get_compare_pipeline(config: PipelineConfig | None = None) -> ComparePipelin
     retriever = get_retriever(cfg)
     comparator = ProductComparator()
     llm = get_llm_client(cfg)
-    return ComparePipeline(retriever=retriever, comparator=comparator, llm_client=llm)
+    return ComparePipeline(
+        retriever=retriever,
+        comparator=comparator,
+        llm_client=llm,
+        product_repository=get_cached_product_repository(),
+    )
+
+
+@lru_cache()
+def get_cached_compare_pipeline() -> ComparePipeline:
+    """Cached, zero-arg compare pipeline provider for FastAPI Depends().
+
+    Mirrors ``get_cached_recommend_pipeline``: building the pipeline is
+    expensive (embedder setup, vector DB connection, LLM client setup), so
+    it is created once and reused.
+    """
+    logger.info("Building compare pipeline (first request only)...")
+    t0 = time.perf_counter()
+    pipeline = get_compare_pipeline()
+    logger.info("Compare pipeline built in %.2fs", time.perf_counter() - t0)
+    return pipeline

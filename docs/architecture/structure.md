@@ -18,6 +18,10 @@ rag-product-recommend/
 │   ├── retrieval/              # Product retrieval & search
 │   ├── sync/                   # CDC sync workers (Debezium → ES/pgvector)
 │   ├── generation/             # LLM generation & prompts
+│   ├── guardrails/             # Non-LLM input/context/output validation
+│   │   ├── input/               #   normalize, heuristics, injection denylist
+│   │   ├── context/              #   sanitize retrieved product text
+│   │   └── output/               #   schema validation + grounding
 │   ├── pipeline/               # Orchestration layer
 │   │   ├── recommend/          #   Recommendation domain logic
 │   │   └── compare/            #   Comparison domain logic
@@ -154,7 +158,7 @@ All domain logic lives here. This is a pure Python package with no web framework
 | ---- | ------- | ------------------- |
 | `llm_client.py` | Unified client for Anthropic, OpenAI, and Gemini — all LLM calls go through here | When adding a new LLM provider or changing the client interface |
 | `response_parser.py` | Parse structured JSON from LLM text output | When changing the expected response format or adding a new response type |
-| `guardrails.py` | Input validation (query length, injection detection) and output validation (well-formed JSON, no hallucinations) | When adding new safety checks or adjusting validation thresholds |
+| `guardrails.py` | **Legacy** input/output helper — superseded by `src/guardrails/` (below); no longer called by either pipeline | Do not extend; add new checks to `src/guardrails/` instead |
 
 **`src/generation/prompt_templates/`** — One file per use case, each exporting `SYSTEM_PROMPT` and `USER_PROMPT_TEMPLATE` as module-level constants.
 
@@ -165,6 +169,43 @@ All domain logic lives here. This is a pure Python package with no web framework
 | `review_summary_prompt.py` | Prompt for summarizing user reviews | When adding review summarization features |
 
 **When to add a new file:** When creating a new pipeline type (e.g., `faq_prompt.py` for a FAQ pipeline) or a new LLM provider that needs its own client module.
+
+### `src/guardrails/` — Non-LLM Guardrails
+
+**Purpose:** Rule/heuristic/schema validation for both pipelines — no LLM calls. Every guardrail returns the same `GuardrailResult` (`allow` / `sanitize` / `block`). See [Guardrails](guardrails.md) for the full contract and diagrams.
+
+| File | Purpose | When to add/update |
+| ---- | ------- | ------------------- |
+| `types.py` | `GuardrailAction`, `GuardrailResult` — the shared result contract | When the result shape itself needs a new field |
+| `base.py` | `BaseGuardrail` (ABC), `GuardrailChain` (runs a list of guardrails, short-circuits on `block`) | When changing how guardrails are composed |
+| `config.py` | `GuardrailConfig` — every threshold (query length, URL count, context field length, `max_compare_products`, ...) in one place | When adding a new tunable limit |
+| `exceptions.py` | `InputGuardrailBlocked` — raised by pipelines, mapped to `HTTP 422` by the routes | When changing the block/error contract |
+| `logging_utils.py` | `log_guardrail_event()` — structured `guardrail=... action=... reason=...` log line | When changing the log format |
+| `fallback.py` | `build_recommend_fallback()` / `build_compare_fallback()` — deterministic response built from already-retrieved data, no second LLM call | When changing what a degraded response looks like |
+
+**`src/guardrails/input/`** — Checks the raw query, in order, before retrieval.
+
+| File | Purpose | When to add/update |
+| ---- | ------- | ------------------- |
+| `normalize.py` | `NormalizeGuardrail` — Unicode NFC, strip control chars, collapse whitespace (always `sanitize`) | When changing text normalization rules |
+| `heuristics.py` | `HeuristicGuardrail` — blank/length/URL-count/code-block/repeated-character checks | When tuning length or heuristic thresholds |
+| `injection.py` | `InjectionGuardrail` — regex denylist for prompt-injection/jailbreak phrasing (English + Vietnamese) | When adding a new injection phrasing to block |
+
+**`src/guardrails/context/`** — Sanitizes retrieved product text before it enters the prompt.
+
+| File | Purpose | When to add/update |
+| ---- | ------- | ------------------- |
+| `sanitizer.py` | `sanitize_text_field()` / `sanitize_product_fields()` — strip HTML/script + embedded-instruction sentences, truncate | When a new free-text product field needs sanitizing |
+
+**`src/guardrails/output/`** — Validates and grounds the LLM's JSON response.
+
+| File | Purpose | When to add/update |
+| ---- | ------- | ------------------- |
+| `schemas.py` | `RecommendLLMOutput`, `CompareLLMOutput` — Pydantic models mirroring each prompt template's exact JSON contract | When a prompt template's JSON contract changes |
+| `validator.py` | Parses JSON (via `ResponseParser`) and validates against the matching schema | When changing how parse failures are handled |
+| `grounding.py` | `ground_recommendations()` / `ground_compare_analysis()` — drop items whose name doesn't match a retrieved/compared product | When changing the name-matching rule |
+
+**When to add a new file:** When adding a guardrail for a new pipeline (e.g. `/api/search`) — reuse `build_input_chain()` and `sanitize_text_field()` rather than duplicating logic.
 
 ### `src/pipeline/` — Orchestration Layer
 
@@ -243,15 +284,32 @@ All domain logic lives here. This is a pure Python package with no web framework
 
 ## `tests/` — Test Suite
 
-**Purpose:** Automated tests using pytest. Mirrors the `src/` structure.
+**Purpose:** Automated tests using pytest. Unit tests mirror the `src/` and `api/` layout.
 
 | Path | Purpose | When to add/update |
 | ---- | ------- | ------------------- |
-| `conftest.py` | Shared fixtures (mock configs, sample data, test clients) | When adding fixtures needed by multiple test files |
-| `unit/` | Unit tests — test individual classes/functions in isolation with mocks | Add a test file for every new module in `src/` or `api/` |
-| `integration/` | Integration tests — test full pipeline flows with real (or docker) dependencies | Add tests when a new pipeline or API endpoint is created |
+| `conftest.py` | Cross-domain fixtures (`sample_product`, `sample_products`) | When adding fixtures needed by multiple domains |
+| `unit/<domain>/` | Unit tests for one domain (`api/`, `retrieval/`, `pipeline/`, …) | Add a folder when a new top-level domain appears in `src/` or `api/` |
+| `unit/<domain>/conftest.py` | Fixtures shared within one domain (e.g. API `TestClient`) | When several test files in the same domain share setup |
+| `integration/` | Integration tests — full flows with real (or docker) dependencies | Add tests when a new pipeline or API endpoint needs service-backed coverage |
 
-**Naming convention:** `test_<module_name>.py` (e.g., `test_filter_engine.py` for `src/retrieval/filter_engine.py`).
+**Layout (unit):**
+
+```
+tests/unit/
+├── api/              # schemas, metrics, routes/
+├── embedding/
+├── guardrails/
+├── ingestion/
+├── pipeline/
+├── retrieval/
+├── sync/
+└── utils/
+```
+
+**Naming convention:** `tests/unit/<domain>/test_<module>.py` for
+`src/<domain>/<module>.py` or `api/<path>/<module>.py`. Route tests go in
+`tests/unit/api/routes/test_<route>.py`.
 
 ---
 
@@ -351,7 +409,8 @@ All domain logic lives here. This is a pure Python package with no web framework
 | Vector DB | Always through `src/embedding/vector_store.py` |
 | Prompt templates | Module-level constants: `SYSTEM_PROMPT`, `USER_PROMPT_TEMPLATE` |
 | API dependencies | Factory functions in `api/deps.py` (e.g., `get_retriever()`, `get_llm_client()`) |
+| Guardrails | Non-LLM input/context/output checks always go through `src/guardrails/` (see [Guardrails](guardrails.md)) — never `src/generation/guardrails.py` (legacy) |
 | User-facing text | Vietnamese |
 | Code & comments | English |
 | Package management | `uv` only — never `pip install` |
-| New modules | Always add a corresponding test file in `tests/unit/` |
+| New modules | Always add a corresponding test file under `tests/unit/<domain>/` (mirror the module path) |

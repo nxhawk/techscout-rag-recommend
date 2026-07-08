@@ -32,8 +32,9 @@ flowchart TD
 
     subgraph Online["Query Processing (online, per-request)"]
         direction TB
-        Q[User Query] --> GIN["Guardrails\n(input check)"]
-        GIN --> ROUTER{RAG Router}
+        Q[User Query] --> GIN["Input Guardrail\n(normalize + heuristics + injection)"]
+        GIN -->|block| E422["HTTP 422\n(Vietnamese reason)"]
+        GIN -->|allow / sanitize| ROUTER{RAG Router}
 
         ROUTER -->|RECOMMEND| RI[UserIntentParser]
         RI --> RF[FilterEngine]
@@ -46,11 +47,14 @@ flowchart TD
         CR --> CAL[SpecAligner]
         CAL --> CFM[ComparisonFormatter]
 
-        RSC --> LLM["LLM Client\n(Anthropic / OpenAI / Gemini)"]
-        CFM --> LLM
+        RSC --> GCTX["Context Guardrail\n(sanitize product text)"]
+        CFM --> GCTX
+        GCTX --> LLM["LLM Client\n(Anthropic / OpenAI / Gemini)"]
         LLM --> RP[ResponseParser]
-        RP --> GOUT["Guardrails\n(output check)"]
-        GOUT --> RESP[JSON Response]
+        RP --> GOUT["Output Guardrail\n(schema validate + grounding)"]
+        GOUT -->|invalid / ungrounded| FB["Deterministic Fallback\n(no second LLM call)"]
+        GOUT -->|valid & grounded| RESP["JSON Response\n+ warnings[]"]
+        FB --> RESP
     end
 
     VDB -.->|vector + metadata search| RR
@@ -66,43 +70,53 @@ The sequence diagram below shows the same online path as a single request timeli
 sequenceDiagram
     actor User
     participant API as FastAPI Route
-    participant Guard as Guardrails
-    participant Router as RAGRouter
     participant Pipe as Recommend/Compare Pipeline
+    participant Guard as Guardrails (src/guardrails/)
     participant VDB as Postgres (pgvector)
     participant LLM as LLM Client
 
     User->>API: POST /api/recommend or /api/compare
-    API->>Guard: validate input
-    Guard-->>API: ok
+    API->>Pipe: Pipeline.run(query)
+    Pipe->>Guard: input guardrail chain
 
-    API->>Router: classify(query)
-    Router-->>API: RECOMMEND | COMPARE
+    alt blocked (injection / heuristics)
+        Guard-->>Pipe: block(reason)
+        Pipe-->>API: raise InputGuardrailBlocked
+        API-->>User: 422 (Vietnamese reason)
+    else allow / sanitize
+        Guard-->>Pipe: sanitized query
 
-    alt RECOMMEND
-        API->>Pipe: RecommendPipeline.run(query)
-        Pipe->>Pipe: UserIntentParser.parse(query)
-        Pipe->>Pipe: FilterEngine.extract(query)
-        Pipe->>VDB: query(vector, filters)
-        VDB-->>Pipe: candidates
-        Pipe->>Pipe: CrossEncoderReranker.rerank(candidates)
-        Pipe->>Pipe: ProductScorer.score(candidates)
-    else COMPARE
-        API->>Pipe: ComparePipeline.run(query)
-        Pipe->>VDB: fetch products (by query or product_ids)
-        VDB-->>Pipe: products
-        Pipe->>Pipe: SpecAligner.align(products)
-        Pipe->>Pipe: ComparisonFormatter.format(aligned)
+        alt RECOMMEND
+            Pipe->>Pipe: UserIntentParser.parse(query)
+            Pipe->>Pipe: FilterEngine.extract(query)
+            Pipe->>VDB: query(vector, filters)
+            VDB-->>Pipe: candidates
+            Pipe->>Pipe: CrossEncoderReranker.rerank(candidates)
+            Pipe->>Pipe: ProductScorer.score(candidates)
+        else COMPARE
+            Pipe->>VDB: fetch products (by query or product_ids)
+            VDB-->>Pipe: products
+            Pipe->>Pipe: SpecAligner.align(products)
+            Pipe->>Pipe: ComparisonFormatter.format(aligned)
+        end
+
+        Pipe->>Guard: context guardrail (sanitize product text)
+        Guard-->>Pipe: sanitized context
+        Pipe->>LLM: generate(prompt_with_context)
+        LLM-->>Pipe: raw text response
+        Pipe->>Pipe: ResponseParser.parse(raw)
+        Pipe->>Guard: output guardrail (schema validate + grounding)
+
+        alt valid & grounded
+            Guard-->>Pipe: sanitized_payload
+        else invalid JSON/schema, or empty after grounding
+            Guard-->>Pipe: block(reason)
+            Pipe->>Pipe: deterministic fallback (no second LLM call)
+        end
+
+        Pipe-->>API: {result, warnings[]}
+        API-->>User: 200 JSON Response
     end
-
-    Pipe->>LLM: generate(prompt_with_context)
-    LLM-->>Pipe: raw text response
-    Pipe->>Pipe: ResponseParser.parse(raw)
-    Pipe-->>API: structured result
-
-    API->>Guard: validate output
-    Guard-->>API: ok
-    API-->>User: JSON Response
 ```
 
 ## Core Layers
@@ -121,7 +135,11 @@ Given a user query, the retrieval layer extracts filters from natural language (
 
 ### 4. Generation (`src/generation/`)
 
-Takes the retrieved products and user intent, fills a prompt template, and calls the LLM (Claude or GPT) to generate a structured JSON response. Includes guardrails for input validation and output safety checks.
+Takes the retrieved products and user intent, fills a prompt template, and calls the LLM (Claude or GPT) to generate a structured JSON response.
+
+### Guardrails (`src/guardrails/`)
+
+A cross-cutting, non-LLM layer wired into both pipelines at three points: an **input guardrail** rejects/cleans the raw query before retrieval, a **context guardrail** sanitizes retrieved product text before it enters the prompt, and an **output guardrail** validates the LLM's JSON against a schema and grounds every item against retrieved products — falling back to a deterministic response (no second LLM call) on failure instead of erroring out. See [Guardrails](guardrails.md) for the full breakdown.
 
 ### 5. Catalog & CDC Sync (`src/catalog/`, `src/sync/`)
 
@@ -136,3 +154,4 @@ The pipeline layer ties everything together. The `RAGRouter` classifies incoming
 - [C4 Model](c4-model.md) — Context, Container, and Component diagrams of the system.
 - [Data Flow](data-flow.md) — data formats and storage as they move through ingestion and per-request processing.
 - [Hybrid Retrieval](hybrid-retrieval.md) — semantic + BM25 fusion, and how CDC keeps both indexes fresh.
+- [Guardrails](guardrails.md) — input/context/output validation, grounding, and the deterministic fallback policy.

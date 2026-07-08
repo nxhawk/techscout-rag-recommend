@@ -26,9 +26,13 @@ LLM-written explanation (in Vietnamese) of why each product fits.
 
 | Field     | Type   | Required | Default | Description                    |
 | --------- | ------ | -------- | ------- | ------------------------------ |
-| `query`   | string | Yes      | —       | Natural language product query (Vietnamese or English) |
-| `top_k`   | int    | No       | 5       | Number of recommendations      |
-| `filters` | object | No       | null    | Reserved for future use — filters are currently extracted automatically from `query` by the `FilterEngine` |
+| `query`   | string | Yes      | —       | Natural language product query (Vietnamese or English). 1–2000 characters, whitespace-only rejected |
+| `top_k`   | int    | No       | 5       | Number of recommendations. Must be 1–10 |
+| `filters` | object | No       | null    | Reserved for future use — filters are currently extracted automatically from `query` by the `FilterEngine`. Only whitelisted keys are accepted: `brand`, `category`, `price_min`, `price_max`, `min_rating`, `tags` — any other key is a `422` |
+
+Beyond these field-level checks, `query` also passes through the [input
+guardrail](../architecture/guardrails.md) (normalize → length/URL/code
+heuristics → prompt-injection denylist) before retrieval runs.
 
 Filters extracted from the query and applied **at the vector-store level**
 (products failing them never reach the LLM):
@@ -50,10 +54,11 @@ curl -X POST http://localhost:8000/api/recommend \
 
 **Response:**
 
-| Field             | Type   | Description                                        |
-| ----------------- | ------ | -------------------------------------------------- |
-| `recommendations` | array  | LLM-ranked products with reasoning (see below)     |
-| `summary`         | string | Overall summary of the recommendations (Vietnamese) |
+| Field             | Type     | Description                                        |
+| ----------------- | -------- | -------------------------------------------------- |
+| `recommendations` | array    | LLM-ranked products with reasoning (see below)     |
+| `summary`         | string   | Overall summary of the recommendations (Vietnamese) |
+| `warnings`        | string[] | Vietnamese notes about anything a guardrail sanitized, dropped, or replaced (empty when nothing happened) |
 
 ```json
 {
@@ -67,20 +72,26 @@ curl -X POST http://localhost:8000/api/recommend \
       "best_for": "Photography enthusiasts on a budget"
     }
   ],
-  "summary": "Top picks based on camera quality within your budget"
+  "summary": "Top picks based on camera quality within your budget",
+  "warnings": []
 }
 ```
 
 The LLM is called in **native JSON mode** (Gemini `response_mime_type`,
 OpenAI `response_format`), so the output is machine-parseable JSON with no
-prose preamble. In the rare case parsing still fails, `recommendations` is
-empty and `summary` contains the raw LLM text as a fallback.
+prose preamble. The response then passes the [output guardrail](../architecture/guardrails.md):
+it's validated against a Pydantic schema and every recommendation is
+**grounded** against the retrieved products (a hallucinated product name is
+dropped). If validation fails or nothing survives grounding, the endpoint
+still returns `200` with a deterministic fallback built from the top-ranked
+retrieved products — never an error — and `warnings` explains what happened.
 
 **Errors:**
 
 | Status | `detail` message | Meaning |
 | ------ | ---------------- | ------- |
-| `422`  | (FastAPI validation) | Invalid request body (e.g. missing `query`) |
+| `422`  | (FastAPI validation) | Invalid request body — missing/blank/too-long `query`, `top_k` outside `1..10`, or an unknown `filters` key |
+| `422`  | Guardrail-specific Vietnamese reason (e.g. *"Yêu cầu chứa nội dung nghi vấn prompt injection/jailbreak."*) | The [input guardrail](../architecture/guardrails.md) rejected the query (prompt injection, abnormal length/URLs/code) |
 | `503`  | "Hệ thống đã hết hạn mức gọi AI…" | LLM/embedding provider quota exhausted (429). The API fails fast — no quota-wait sleeps — and logs a one-line summary |
 | `503`  | "Hệ thống gợi ý đang gặp sự cố…" | Any other pipeline failure (vector DB unreachable, provider error…). Full traceback is logged server-side |
 
@@ -103,13 +114,20 @@ sequenceDiagram
     Note over D: First call builds the pipeline<br/>(embedder + vector store + LLM client),<br/>then it is cached via lru_cache
     D-->>A: RecommendPipeline
     A->>P: run(query, top_k)
+    P->>P: Input guardrail (normalize/heuristics/injection)<br/>block → raise InputGuardrailBlocked
     P->>P: Parse intent (budget, use case, priorities)
     P->>V: Vector search + SQL filters:<br/>price range, brand, category (top_k × 3)
     P->>P: Score & rank candidates, keep top_k
+    P->>P: Context guardrail (sanitize product text)
     P->>L: Prompt with intent + product context<br/>(native JSON mode)
     L-->>P: Strict JSON answer (Vietnamese)
-    P-->>A: {recommendations, summary}
-    A-->>C: 200 RecommendResponse
+    P->>P: Output guardrail (schema validate + grounding,<br/>fallback on failure)
+    P-->>A: {recommendations, summary, warnings}
+    alt input guardrail blocked
+        A-->>C: 422 (Vietnamese reason)
+    else
+        A-->>C: 200 RecommendResponse
+    end
 ```
 
 Key implementation details:
@@ -157,10 +175,10 @@ Compare two or more products side by side.
 
 | Field         | Type     | Required | Description                         |
 | ------------- | -------- | -------- | ----------------------------------- |
-| `query`       | string   | No       | Natural language comparison query   |
-| `product_ids` | string[] | No       | Specific product IDs to compare     |
+| `query`       | string   | No       | Natural language comparison query. 0–2000 characters |
+| `product_ids` | string[] | No       | Specific product IDs to compare, looked up via the source-of-truth catalog. Max 5, each matching `[a-zA-Z0-9_-]{1,64}`, duplicates removed |
 
-Provide either `query` or `product_ids` (at least one required).
+Provide either `query` or `product_ids` — at least one is required (`422` if both are missing). `query` also passes through the same [input guardrail](../architecture/guardrails.md) as `/api/recommend`; `product_ids` alone skips that check (there's no free-text query to validate).
 
 **Example:**
 
@@ -172,6 +190,13 @@ curl -X POST http://localhost:8000/api/compare \
 
 **Response:**
 
+| Field              | Type     | Description                                        |
+| ------------------ | -------- | -------------------------------------------------- |
+| `comparison_table` | object   | Aligned specs table (`SpecAligner` output)         |
+| `analysis`         | object   | LLM analysis: `criteria_comparison`, `product_analysis` |
+| `conclusion`       | string   | Final verdict (Vietnamese)                          |
+| `warnings`         | string[] | Vietnamese notes about anything a guardrail sanitized, dropped, or replaced |
+
 ```json
 {
   "comparison_table": {
@@ -182,9 +207,30 @@ curl -X POST http://localhost:8000/api/compare \
     "criteria_comparison": [...],
     "product_analysis": [...]
   },
-  "conclusion": "Summary of which product suits which use case"
+  "conclusion": "Summary of which product suits which use case",
+  "warnings": []
 }
 ```
+
+Same [output guardrail](../architecture/guardrails.md) mechanism as
+`/api/recommend`: the LLM's JSON is schema-validated and every
+`product_analysis[].name` is grounded against the products actually being
+compared. On failure the endpoint still returns `200` with a deterministic
+fallback built from the comparison table — never an error.
+
+**Errors:**
+
+| Status | `detail` message | Meaning |
+| ------ | ---------------- | ------- |
+| `422`  | (FastAPI validation) | Invalid request body — both `query` and `product_ids` missing, `product_ids` malformed/too many, or `query` too long |
+| `422`  | Guardrail-specific Vietnamese reason | The [input guardrail](../architecture/guardrails.md) rejected `query` (prompt injection, abnormal length/URLs/code) |
+| `422`  | "Cần ít nhất 2 sản phẩm để so sánh." | Fewer than 2 products could be resolved from `product_ids`/`query` |
+| `503`  | "Hệ thống đã hết hạn mức gọi AI…" | LLM/embedding provider quota exhausted (429) |
+| `503`  | "Hệ thống so sánh đang gặp sự cố…" | Any other pipeline failure (vector DB unreachable, provider error…) |
+
+**Prerequisites:** same as `/api/recommend` — products must be ingested
+first, and `product_ids` lookups require the catalog table (`product_catalog`)
+to be populated (via the CRUD API or `scripts/ingest.py`).
 
 ## Search Products
 

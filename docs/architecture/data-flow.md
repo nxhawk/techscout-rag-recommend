@@ -76,8 +76,8 @@ Delivery is at-least-once (offsets committed after apply) and both appliers are 
 
 | Stage | Input | Output | Format | Source |
 | ----- | ----- | ------ | ------ | ------ |
-| Ingress | HTTP request | Validated request body | Pydantic model (`api/schemas.py`) | `api/routes/*.py` |
-| Input guardrail | Raw query string | Pass/reject decision | bool + reason | `src/generation/guardrails.py` |
+| Ingress | HTTP request | Validated request body | Pydantic model (`api/schemas.py`) — `query` length, `top_k` range, `filters` whitelist, `product_ids` format/count | `api/routes/*.py`, `api/schemas.py` |
+| Input guardrail | Raw query string | `GuardrailResult` (`allow`/`sanitize`/`block`) + sanitized query | Normalize → heuristic (length/URL/code/repeats) → injection regex; `block` raises `InputGuardrailBlocked` → `HTTP 422` | `src/guardrails/input/` |
 | Route | Query string | Query type | Enum: `RECOMMEND` / `COMPARE` / `INFO` / `HYBRID` | `src/pipeline/rag_router.py` |
 | Intent parse (recommend) | Query string | Intent | Dict: `budget`, `use_case`, `priorities`, `brand_pref` | `src/pipeline/recommend/user_intent_parser.py` |
 | Filter extraction | Query string | Metadata filters | Dict: `price_min/max`, `brand`, `category`, `min_rating` | `src/retrieval/filter_engine.py` |
@@ -87,11 +87,14 @@ Delivery is at-least-once (offsets committed after apply) and both appliers are 
 | Scoring | Candidates + intent | Ranked products | List sorted by `final_score`, truncated to `top_k` | `src/pipeline/recommend/scoring.py`, `src/retrieval/similarity_scorer.py` |
 | Compare: alignment | 2+ products | Aligned spec table | Dict keyed by normalized spec name | `src/pipeline/compare/spec_aligner.py` |
 | Compare: formatting | Aligned specs | Markdown table | String | `src/pipeline/compare/formatter.py` |
-| Prompt fill | Products/table + intent | Prompt | String (`SYSTEM_PROMPT` + `USER_PROMPT_TEMPLATE`) | `src/generation/prompt_templates/*.py` |
+| Context guardrail | Retrieved/compared product fields (name, brand, document/description) | Sanitized field values | Strip HTML/`<script>`, replace embedded-instruction sentences, truncate to `max_context_field_chars` (default 300) | `src/guardrails/context/sanitizer.py` |
+| Prompt fill | Sanitized products/table + intent | Prompt | String (`SYSTEM_PROMPT` + `USER_PROMPT_TEMPLATE`) | `src/generation/prompt_templates/*.py` |
 | Generation | Prompt | Raw completion | String (expected to contain JSON) | `src/generation/llm_client.py` |
-| Response parse | Raw completion | Structured result | Dict / Pydantic model | `src/generation/response_parser.py` |
-| Output guardrail | Structured result | Pass/reject decision | bool + reason (checks for hallucinated product data, malformed JSON) | `src/generation/guardrails.py` |
-| Egress | Structured result | HTTP response | JSON, Vietnamese user-facing text | `api/routes/*.py` |
+| Response parse | Raw completion | Parsed dict or `None` | Direct JSON parse, falls back to markdown-fence extraction | `src/generation/response_parser.py` |
+| Output guardrail | Parsed dict | `GuardrailResult` — validated payload, or `block` | Pydantic schema validation (`RecommendLLMOutput`/`CompareLLMOutput`) against the exact prompt JSON contract | `src/guardrails/output/schemas.py`, `validator.py` |
+| Grounding | Validated items + retrieved/compared products | Grounded items + `warnings[]` | Drops any item whose `name` doesn't match a retrieved/compared product (case/whitespace-insensitive) | `src/guardrails/output/grounding.py` |
+| Fallback (on schema failure or empty grounding) | Retrieved/compared products | Deterministic structured result | Built from already-fetched candidates — **no second LLM call** | `src/guardrails/fallback.py` |
+| Egress | Structured result + `warnings[]` | HTTP response | JSON, Vietnamese user-facing text | `api/routes/*.py` |
 
 ## Data at Rest
 

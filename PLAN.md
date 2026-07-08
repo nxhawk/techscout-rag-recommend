@@ -165,7 +165,7 @@ Hai pipeline chính:
 - [x] `src/generation/prompt_templates/review_summary_prompt.py`
 - [x] `src/generation/llm_client.py` — Multi-provider (Anthropic, OpenAI, Gemini)
 - [x] `src/generation/response_parser.py` — Parse JSON từ output LLM
-- [x] `src/generation/guardrails.py` — Validate input/output (bổ sung so với plan cũ)
+- [x] `src/guardrails/` — Guardrail input/context/output không dùng LLM (xem `GUARDRAIL_PLAN.md`); `src/generation/guardrails.py` cũ giữ lại nhưng không còn được dùng
 
 ---
 
@@ -195,7 +195,7 @@ Hai pipeline chính:
 
 - [x] `evaluation/test_case/test_cases_recommend.json`, `evaluation/test_case/test_cases_compare.json` — Bộ test case
 - [x] `evaluation/eval_recommend.py`, `evaluation/eval_compare.py`
-- [x] Unit tests: `tests/unit/test_chunker.py`, `test_filter_engine.py`, `test_router.py` (+ `tests/test_crawler.py`)
+- [x] Unit tests: `tests/unit/ingestion/test_chunker.py`, `retrieval/test_filter_engine.py`, `pipeline/test_rag_router.py` (+ `tests/test_crawler.py`)
 - [x] `tests/conftest.py` — fixtures dùng chung; `tests/integration/` sẵn khung
 - [~] Mở rộng bộ test 50-100 câu + metrics (Relevance, Faithfulness, Completeness, Fairness)
 
