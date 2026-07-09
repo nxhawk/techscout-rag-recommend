@@ -54,10 +54,11 @@ flowchart LR
     end
 
     subgraph Retrieve["2. Retrieve"]
-        Intent_Out --> FE[FilterEngine]
+        Intent_Out --> QR["QueryRewriter\n(normalize/expand/\nintent-aware)"]
+        QR --> FE[FilterEngine]
         FE --> Filters["price, brand,\ncategory, rating"]
-        Q --> EMB[ProductEmbedder]
-        EMB --> Vec[Query Vector]
+        QR --> EMB[ProductEmbedder]
+        EMB --> Vec["Query Vector(s)\n(1 per variant)"]
         Filters --> VS[VectorStore.query]
         Vec --> VS
         Q --> BM["Keyword search\n(Elasticsearch BM25 /\nin-memory fallback)"]
@@ -105,18 +106,25 @@ The `UserIntentParser` analyzes the query to extract structured intent:
 
 **Source:** `src/pipeline/recommend/user_intent_parser.py`
 
-**Step 2 — Filter & Retrieve**
+**Step 2 — Rewrite, Filter & Retrieve**
 
-Two things happen in parallel:
+Before filtering and embedding, `QueryRewriter` normalizes the query, corrects
+common typos, expands synonyms, and (using the intent from Step 1) appends
+use_case/priority vocabulary. This is local (regex + lookup tables) so it
+costs no extra API calls with the default single-variant configuration. See
+[Query Rewriting](query-rewriting.md) for the full breakdown.
+
+Then two things happen in parallel, both operating on the **rewritten**
+query:
 
 1. **FilterEngine** extracts metadata filters from the query (brand, category, price range, minimum rating) using regex patterns on both Vietnamese ("dưới 15 triệu") and English ("under 15 million") text.
-2. **ProductEmbedder** converts the query into a vector using the configured embedding provider (`embedding_provider`/`embedding_model` in `configs/settings.yaml`, e.g. Gemini `gemini-embedding-001` or OpenAI `text-embedding-3-small`).
+2. **ProductEmbedder** converts each query variant into a vector using the configured embedding provider (`embedding_provider`/`embedding_model` in `configs/settings.yaml`, e.g. Gemini `gemini-embedding-001` or OpenAI `text-embedding-3-small`). With the default `query_rewrite_max_variants: 1` there is exactly one variant, so this is a single embedding call, same as before query rewriting existed.
 
-The `ProductRetriever` then queries Postgres (pgvector) with both the vector and the filters translated into SQL conditions — equality for brand/category, numeric ranges for price/rating (e.g. `(metadata->>'price')::numeric <= 15000000`) — retrieving `top_k × 3` candidates (over-fetching for the scoring step to narrow down). Over-budget products are excluded here, before scoring and prompting.
+The `ProductRetriever` then queries Postgres (pgvector) with each vector and the filters translated into SQL conditions — equality for brand/category, numeric ranges for price/rating (e.g. `(metadata->>'price')::numeric <= 15000000`) — retrieving `top_k × 3` candidates per variant (over-fetching for the scoring step to narrow down), merging multi-variant results by keeping the best score per product id. Over-budget products are excluded here, before scoring and prompting.
 
 With `use_bm25` enabled (default), the semantic results are then fused with a **BM25** keyword ranking via **Reciprocal Rank Fusion** (`HybridSearch`), so exact-term matches (model numbers, spec tokens) get boosted. In production the keyword branch is served by **Elasticsearch** (`ESKeywordSearch`, index `product_chunks`), kept fresh by the CDC sync workers, with filters pushed into the ES query as `bool.filter` clauses (**pre-filter**, same guarantee as the semantic branch's SQL `WHERE`). If Elasticsearch is unreachable, the branch falls back to an **in-memory BM25** snapshot built at startup (filters re-applied in Python, a post-filter); if even that is unavailable, retrieval degrades to semantic-only. See [Hybrid Retrieval & Reranking](hybrid-retrieval.md) for the full technique.
 
-**Source:** `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`, `src/retrieval/hybrid_search.py`, `src/retrieval/es_keyword_search.py`, `src/retrieval/keyword_search.py`
+**Source:** `src/retrieval/query_rewriter.py`, `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`, `src/retrieval/hybrid_search.py`, `src/retrieval/es_keyword_search.py`, `src/retrieval/keyword_search.py`
 
 **Step 3 — Score & Rank**
 
@@ -254,6 +262,16 @@ See [Data Flow](data-flow.md#continuous-product-write-data-flow-cdc) and [Hybrid
 
 ## Cross-Cutting Components
 
+### Query Rewriting
+
+Before filter extraction and embedding, `QueryRewriter` normalizes the query,
+corrects common typos, expands synonyms, optionally enriches it with parsed
+intent (use_case/priorities), and can fan out into multiple query variants
+for parallel retrieval. Fully local — no extra LLM/embedding calls with the
+default configuration. Full details: [Query Rewriting](query-rewriting.md).
+
+**Source:** `src/retrieval/query_rewriter.py`
+
 ### Hybrid Search
 
 `HybridSearch` combines multiple retrieval strategies:
@@ -309,7 +327,8 @@ All components are wired together via factory functions in `api/deps.py`:
 get_config() → PipelineConfig
 get_embedder() → ProductEmbedder
 get_vector_store() → VectorStore
-get_retriever() → ProductRetriever
+get_query_rewriter() → QueryRewriter | None            # None when use_query_rewrite is off
+get_retriever() → ProductRetriever                      # wraps query_rewriter, filter_engine, scorer
 get_keyword_backend() → ESKeywordSearch | None        # Elasticsearch when configured & reachable
 get_searcher() → HybridSearch | ProductRetriever      # ES/BM25 + RRF (use_bm25); ES → in-memory BM25 → semantic-only
 get_reranker() → CrossEncoderReranker | None          # when use_reranker

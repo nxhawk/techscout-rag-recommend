@@ -55,7 +55,7 @@ class _FakeRetriever:
         self.results = results
         self.filter_engine = FilterEngine()
 
-    def retrieve(self, query, top_k=10):
+    def retrieve(self, query, top_k=10, intent_hints=None):
         return self.results
 
 
@@ -84,4 +84,4 @@ class TestHybridSearchWithPrefilterBackend:
     def test_setup_is_noop_for_prefilter_backend(self):
         backend = _PrefilterBackend()
         searcher = HybridSearch(_FakeRetriever(self.SEMANTIC), bm25_index=backend)
-        searcher.setup()  # must not raise / must not require a vector store
+        searcher.setup()  # must not raise / must not requ

@@ -129,7 +129,9 @@ Toàn bộ logic domain nằm ở đây. Đây là một Python package thuần 
 
 | File | Mục đích | Khi nào thêm/cập nhật |
 | ---- | ------- | ------------------- |
-| `product_retriever.py` | Retriever chính — kết hợp trích xuất filter, embedding, truy vấn vector, và chấm điểm thành một luồng | Khi đổi thứ tự pipeline truy xuất hoặc thêm bước truy xuất mới |
+| `product_retriever.py` | Retriever chính — kết hợp viết lại truy vấn, trích xuất filter, embedding, truy vấn vector, và chấm điểm thành một luồng | Khi đổi thứ tự pipeline truy xuất hoặc thêm bước truy xuất mới |
+| `query_rewriter.py` | Viết lại truy vấn: chuẩn hóa, sửa lỗi gõ, mở rộng đồng nghĩa, sinh multi-query, intent-aware rewriting (xem [Viết lại truy vấn](query-rewriting.vi.md)) | Khi thêm strategy chuẩn hóa/mở rộng mới hoặc thêm từ intent-aware mới |
+| `data/query_rewrite_rules.json` | Vocabulary cho `query_rewriter.py` — noise phrase, typo correction, đồng nghĩa, từ use_case/priority, stopword | Khi làm giàu vocabulary viết lại truy vấn (chỉ đổi dữ liệu, không cần sửa code) |
 | `hybrid_search.py` | Hợp nhất nhánh semantic + keyword bằng RRF; hỗ trợ backend pre-filter (ES) và fallback BM25 in-memory post-filter | Khi thêm chiến lược tìm kiếm mới hoặc đổi hành vi fusion |
 | `es_keyword_search.py` | Backend keyword Elasticsearch — BM25 với pre-filter `bool.filter`, upsert/delete chunk cho sync worker | Khi đổi mapping ES, dạng query, hoặc filter pushdown |
 | `filter_engine.py` | Trích xuất filter có cấu trúc (giá, thương hiệu, danh mục, rating) từ truy vấn ngôn ngữ tự nhiên tiếng Việt | Khi hỗ trợ loại filter mới (vd: màu sắc, dung lượng) hoặc thêm pattern từ khóa mới |

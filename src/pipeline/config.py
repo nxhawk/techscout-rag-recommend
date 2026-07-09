@@ -1,6 +1,7 @@
 """
 Config - Cấu hình pipeline.
 """
+
 import yaml
 from dataclasses import dataclass
 
@@ -8,6 +9,7 @@ from dataclasses import dataclass
 @dataclass
 class PipelineConfig:
     """Pipeline configuration."""
+
     # LLM
     llm_provider: str = "anthropic"
     llm_model: str = "claude-sonnet-4-6"
@@ -35,6 +37,13 @@ class PipelineConfig:
     keyword_candidates: int = 50
     use_reranker: bool = False
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+    # Query rewriting (normalize/typo-correct/expand/intent-aware). Cheap and
+    # local (no extra API calls) so it defaults on. `query_rewrite_max_variants`
+    # controls multi-query fan-out: each extra variant costs one more
+    # embedding call, so it defaults to 1 (single query, current behavior).
+    use_query_rewrite: bool = True
+    query_rewrite_max_variants: int = 1
 
     # Keyword backend: "memory" (in-memory BM25 snapshot) or "elasticsearch"
     # (CDC-synced index, pre-filtered). Env overrides: KEYWORD_BACKEND,

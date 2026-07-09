@@ -129,7 +129,9 @@ All domain logic lives here. This is a pure Python package with no web framework
 
 | File | Purpose | When to add/update |
 | ---- | ------- | ------------------- |
-| `product_retriever.py` | Main retriever — combines filter extraction, embedding, vector query, and scoring into one flow | When changing the retrieval pipeline order or adding a new retrieval step |
+| `product_retriever.py` | Main retriever — combines query rewriting, filter extraction, embedding, vector query, and scoring into one flow | When changing the retrieval pipeline order or adding a new retrieval step |
+| `query_rewriter.py` | Query rewriting: normalization, typo correction, synonym expansion, multi-query generation, intent-aware rewriting (see [Query Rewriting](query-rewriting.md)) | When adding a new normalization/expansion strategy or a new intent-aware term |
+| `data/query_rewrite_rules.json` | Vocabulary for `query_rewriter.py` — noise phrases, typo corrections, synonyms, use_case/priority terms, stopwords | When enriching the query-rewriting vocabulary (pure data change, no code edit needed) |
 | `hybrid_search.py` | Fuse semantic + keyword branches with RRF; supports pre-filtering backends (ES) and the post-filtering in-memory BM25 fallback | When adding a new search strategy or changing fusion behavior |
 | `es_keyword_search.py` | Elasticsearch keyword backend — BM25 with `bool.filter` pre-filtering, chunk upsert/delete for the sync workers | When changing the ES mapping, query shape, or filter pushdown |
 | `filter_engine.py` | Extract structured filters (price, brand, category, rating) from Vietnamese natural language queries | When supporting a new filter type (e.g., color, storage size) or adding new keyword patterns |

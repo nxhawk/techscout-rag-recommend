@@ -2,6 +2,7 @@
 Hybrid Search - Combine semantic search (pgvector) with keyword search (BM25)
 via Reciprocal Rank Fusion, while enforcing the same metadata filters on both.
 """
+
 import logging
 from typing import Any
 
@@ -50,13 +51,27 @@ class HybridSearch:
         self.bm25.build(corpus["ids"], corpus["documents"], corpus["metadatas"])
         logger.info("BM25 index built over %d documents", self.bm25.size)
 
-    def retrieve(self, query: str, top_k: int = 10) -> list[dict]:
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 10,
+        intent_hints: dict[str, Any] | None = None,
+    ) -> list[dict]:
         """Alias so HybridSearch is a drop-in replacement for ProductRetriever."""
-        return self.search(query, top_k=top_k)
+        return self.search(query, top_k=top_k, intent_hints=intent_hints)
 
-    def search(self, query: str, top_k: int = 10) -> list[dict]:
-        """Hybrid retrieval: semantic + keyword (BM25), fused with RRF."""
-        semantic = self.retriever.retrieve(query, top_k=top_k)
+    def search(
+        self,
+        query: str,
+        top_k: int = 10,
+        intent_hints: dict[str, Any] | None = None,
+    ) -> list[dict]:
+        """Hybrid retrieval: semantic + keyword (BM25), fused with RRF.
+
+        ``intent_hints`` is forwarded to the semantic branch's query rewriter
+        (if configured); the keyword branch searches on the raw query text.
+        """
+        semantic = self.retriever.retrieve(query, top_k=top_k, intent_hints=intent_hints)
         keyword = self._keyword_search(query)
         if not keyword:
             return semantic
@@ -70,9 +85,7 @@ class HybridSearch:
             # Backend applies filters inside the query (e.g. ES bool.filter).
             # Degrade to semantic-only on failure - never break the request.
             try:
-                return self.bm25.search(
-                    query, top_k=self.keyword_candidates, filters=filters
-                )
+                return self.bm25.search(query, top_k=self.keyword_candidates, filters=filters)
             except Exception as exc:
                 logger.warning("Keyword backend failed (%s) - semantic only", exc)
                 return []

@@ -26,7 +26,7 @@ class FakeRetriever:
         self.filter_engine = FilterEngine()
         self.vector_store = None
 
-    def retrieve(self, query: str, top_k: int = 10) -> list[dict]:
+    def retrieve(self, query: str, top_k: int = 10, intent_hints: dict | None = None) -> list[dict]:
         return self.results[:top_k]
 
 
@@ -39,16 +39,23 @@ def candidate(doc_id: str, score: float = 0.5, metadata: dict | None = None) -> 
 
 def test_tokenize_keeps_vietnamese_diacritics():
     assert tokenize("Điện thoại Xiaomi 14, pin TRÂU!") == [
-        "điện", "thoại", "xiaomi", "14", "pin", "trâu",
+        "điện",
+        "thoại",
+        "xiaomi",
+        "14",
+        "pin",
+        "trâu",
     ]
 
 
 def test_bm25_ranks_exact_term_match_first():
-    index = make_index({
-        "p1_specs": ("Xiaomi 14 camera Leica pin 4610mAh", {}),
-        "p2_specs": ("Samsung Galaxy A55 man hinh AMOLED", {}),
-        "p3_specs": ("iPhone 15 camera 48MP", {}),
-    })
+    index = make_index(
+        {
+            "p1_specs": ("Xiaomi 14 camera Leica pin 4610mAh", {}),
+            "p2_specs": ("Samsung Galaxy A55 man hinh AMOLED", {}),
+            "p3_specs": ("iPhone 15 camera 48MP", {}),
+        }
+    )
     hits = index.search("xiaomi 14")
     assert hits[0]["id"] == "p1_specs"
     assert hits[0]["bm25_score"] > 0
@@ -75,10 +82,12 @@ def test_rrf_boosts_document_found_by_both_branches():
     # Semantic order: a, b. BM25 finds b (plus c). Query has no brand/price
     # keywords, so no filters are extracted.
     retriever = FakeRetriever([candidate("a", 0.9), candidate("b", 0.8)])
-    index = make_index({
-        "b": ("điện thoại pin trâu", {}),
-        "c": ("pin trâu sạc nhanh", {}),
-    })
+    index = make_index(
+        {
+            "b": ("điện thoại pin trâu", {}),
+            "c": ("pin trâu sạc nhanh", {}),
+        }
+    )
     hybrid = HybridSearch(retriever, bm25_index=index)
     results = hybrid.search("pin trâu", top_k=3)
 
@@ -96,16 +105,18 @@ def test_rrf_boosts_document_found_by_both_branches():
 def test_bm25_branch_respects_extracted_filters():
     # Query has a budget ("dưới 15 triệu" -> price_max=15_000_000).
     retriever = FakeRetriever([])
-    index = make_index({
-        "cheap": (
-            "điện thoại xiaomi pin tốt",
-            {"price": 10_000_000, "brand": "Xiaomi", "category": "smartphone"},
-        ),
-        "expensive": (
-            "điện thoại xiaomi pin tốt",
-            {"price": 25_000_000, "brand": "Xiaomi", "category": "smartphone"},
-        ),
-    })
+    index = make_index(
+        {
+            "cheap": (
+                "điện thoại xiaomi pin tốt",
+                {"price": 10_000_000, "brand": "Xiaomi", "category": "smartphone"},
+            ),
+            "expensive": (
+                "điện thoại xiaomi pin tốt",
+                {"price": 25_000_000, "brand": "Xiaomi", "category": "smartphone"},
+            ),
+        }
+    )
     hybrid = HybridSearch(retriever, bm25_index=index)
     results = hybrid.search("điện thoại xiaomi dưới 15 triệu", top_k=5)
 
@@ -134,10 +145,12 @@ class FakeReranker:
 
 
 def test_engine_uses_reranker_and_sigmoid_relevance():
-    retriever = FakeRetriever([
-        candidate("a", 0.9, {"name": "A"}),
-        candidate("b", 0.1, {"name": "B"}),
-    ])
+    retriever = FakeRetriever(
+        [
+            candidate("a", 0.9, {"name": "A"}),
+            candidate("b", 0.1, {"name": "B"}),
+        ]
+    )
     engine = RecommendEngine(retriever=retriever, reranker=FakeReranker())
     result = engine.recommend("điện thoại pin tốt", top_k=2)
 

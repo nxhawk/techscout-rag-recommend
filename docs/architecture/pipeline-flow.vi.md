@@ -54,10 +54,11 @@ flowchart LR
     end
 
     subgraph Retrieve["2. Truy xuất"]
-        Intent_Out --> FE[FilterEngine]
+        Intent_Out --> QR["QueryRewriter\n(chuẩn hóa/mở rộng/\nintent-aware)"]
+        QR --> FE[FilterEngine]
         FE --> Filters["price, brand,\ncategory, rating"]
-        Q --> EMB[ProductEmbedder]
-        EMB --> Vec[Query Vector]
+        QR --> EMB[ProductEmbedder]
+        EMB --> Vec["Query Vector(s)\n(1 mỗi variant)"]
         Filters --> VS[VectorStore.query]
         Vec --> VS
         Q --> BM["Keyword search\n(Elasticsearch BM25 /\nin-memory fallback)"]
@@ -105,18 +106,25 @@ Trước tiên, truy vấn thô đi qua `GuardrailChain` đầu vào: `Normalize
 
 **Nguồn:** `src/pipeline/recommend/user_intent_parser.py`
 
-**Bước 2 — Filter & Retrieve**
+**Bước 2 — Viết lại truy vấn, Filter & Retrieve**
 
-Hai việc diễn ra song song:
+Trước khi lọc và embed, `QueryRewriter` chuẩn hóa truy vấn, sửa lỗi gõ phổ
+biến, mở rộng đồng nghĩa, và (dùng intent từ Bước 1) thêm từ vựng
+use_case/priority. Bước này chạy local (regex + bảng tra cứu) nên không tốn
+thêm lệnh gọi API nào với cấu hình mặc định (một variant). Xem [Viết lại
+truy vấn](query-rewriting.vi.md) để biết chi tiết đầy đủ.
+
+Sau đó hai việc diễn ra song song, cả hai đều thao tác trên truy vấn **đã
+rewrite**:
 
 1. **FilterEngine** trích xuất metadata filter từ truy vấn (thương hiệu, danh mục, khoảng giá, rating tối thiểu) bằng regex pattern trên cả văn bản tiếng Việt ("dưới 15 triệu") lẫn tiếng Anh ("under 15 million").
-2. **ProductEmbedder** chuyển truy vấn thành vector bằng embedding provider đã cấu hình (`embedding_provider`/`embedding_model` trong `configs/settings.yaml`, ví dụ Gemini `gemini-embedding-001` hoặc OpenAI `text-embedding-3-small`).
+2. **ProductEmbedder** chuyển từng query variant thành vector bằng embedding provider đã cấu hình (`embedding_provider`/`embedding_model` trong `configs/settings.yaml`, ví dụ Gemini `gemini-embedding-001` hoặc OpenAI `text-embedding-3-small`). Với `query_rewrite_max_variants: 1` (mặc định), chỉ có đúng một variant, nên đây là một lệnh gọi embedding duy nhất, giống hệt trước khi có query rewriting.
 
-`ProductRetriever` sau đó truy vấn Postgres (pgvector) với cả vector lẫn các filter đã dịch thành điều kiện SQL — so sánh bằng cho thương hiệu/danh mục, khoảng số cho giá/rating (ví dụ `(metadata->>'price')::numeric <= 15000000`) — lấy về `top_k × 3` ứng viên (lấy dư để bước chấm điểm thu hẹp lại). Sản phẩm vượt ngân sách bị loại ngay tại đây, trước khi chấm điểm và đưa vào prompt.
+`ProductRetriever` sau đó truy vấn Postgres (pgvector) với từng vector và các filter đã dịch thành điều kiện SQL — so sánh bằng cho thương hiệu/danh mục, khoảng số cho giá/rating (ví dụ `(metadata->>'price')::numeric <= 15000000`) — lấy về `top_k × 3` ứng viên mỗi variant (lấy dư để bước chấm điểm thu hẹp lại), hợp nhất kết quả đa-variant bằng cách giữ điểm cao nhất cho mỗi product id. Sản phẩm vượt ngân sách bị loại ngay tại đây, trước khi chấm điểm và đưa vào prompt.
 
 Khi bật `use_bm25` (mặc định), kết quả semantic được hợp nhất với bảng xếp hạng keyword **BM25** qua **Reciprocal Rank Fusion** (`HybridSearch`), nhờ đó các khớp chính xác theo từ (mã model, thông số) được đẩy hạng. Ở production, nhánh keyword do **Elasticsearch** phục vụ (`ESKeywordSearch`, index `product_chunks`), luôn fresh nhờ các CDC sync worker, với filter đẩy vào query ES dưới dạng mệnh đề `bool.filter` (**pre-filter**, cùng đảm bảo như mệnh đề SQL `WHERE` của nhánh semantic). Nếu Elasticsearch không kết nối được, nhánh này rơi về snapshot **BM25 in-memory** build lúc khởi động (filter áp lại bằng Python, tức post-filter); nếu cả cái đó cũng không có, truy xuất suy giảm về semantic-only. Xem [Truy xuất lai & Reranking](hybrid-retrieval.vi.md) để hiểu đầy đủ kỹ thuật.
 
-**Nguồn:** `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`, `src/retrieval/hybrid_search.py`, `src/retrieval/es_keyword_search.py`, `src/retrieval/keyword_search.py`
+**Nguồn:** `src/retrieval/query_rewriter.py`, `src/retrieval/product_retriever.py`, `src/retrieval/filter_engine.py`, `src/retrieval/hybrid_search.py`, `src/retrieval/es_keyword_search.py`, `src/retrieval/keyword_search.py`
 
 **Bước 3 — Chấm điểm & Xếp hạng**
 
@@ -254,6 +262,16 @@ Xem [Luồng dữ liệu](data-flow.vi.md) và [Truy xuất lai](hybrid-retrieva
 
 ## Các thành phần dùng chung (Cross-Cutting)
 
+### Viết lại truy vấn (Query Rewriting)
+
+Trước khi trích filter và embed, `QueryRewriter` chuẩn hóa truy vấn, sửa lỗi
+gõ phổ biến, mở rộng đồng nghĩa, tùy chọn làm giàu bằng intent đã parse
+(use_case/priorities), và có thể fan-out thành nhiều query variant để truy
+xuất song song. Hoàn toàn chạy local — không tốn thêm lệnh gọi LLM/embedding
+nào với cấu hình mặc định. Chi tiết đầy đủ: [Viết lại truy vấn](query-rewriting.vi.md).
+
+**Nguồn:** `src/retrieval/query_rewriter.py`
+
 ### Hybrid Search
 
 `HybridSearch` kết hợp nhiều chiến lược truy xuất:
@@ -309,7 +327,8 @@ Tất cả các component được kết nối với nhau qua các factory funct
 get_config() → PipelineConfig
 get_embedder() → ProductEmbedder
 get_vector_store() → VectorStore
-get_retriever() → ProductRetriever
+get_query_rewriter() → QueryRewriter | None            # None khi use_query_rewrite tắt
+get_retriever() → ProductRetriever                      # bọc query_rewriter, filter_engine, scorer
 get_keyword_backend() → ESKeywordSearch | None        # Elasticsearch khi được cấu hình & sẵn sàng
 get_searcher() → HybridSearch | ProductRetriever      # ES/BM25 + RRF (use_bm25); ES → BM25 in-memory → semantic-only
 get_reranker() → CrossEncoderReranker | None          # khi use_reranker

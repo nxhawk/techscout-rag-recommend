@@ -1,4 +1,5 @@
 """Recommend Engine - Logic gợi ý sản phẩm chính."""
+
 import math
 
 from src.pipeline.recommend.user_intent_parser import UserIntentParser
@@ -30,7 +31,13 @@ class RecommendEngine:
     def recommend(self, query: str, top_k: int = 5) -> dict:
         """Generate product recommendations for a query."""
         intent = self.intent_parser.parse(query)
-        candidates = self.retriever.retrieve(query, top_k=top_k * 3)
+        # Forwarded to the retriever's query rewriter (intent-aware step),
+        # if one is configured - see src/retrieval/query_rewriter.py.
+        intent_hints = {
+            "use_case": intent.use_case,
+            "priorities": intent.priorities,
+        }
+        candidates = self.retriever.retrieve(query, top_k=top_k * 3, intent_hints=intent_hints)
 
         if self.reranker is not None:
             # Cross-encoder prunes and re-orders the candidate pool; keep
@@ -44,11 +51,13 @@ class RecommendEngine:
                 intent,
                 self._relevance(candidate),
             )
-            scored_products.append({
-                **candidate,
-                "final_score": score_result["total"],
-                "score_breakdown": score_result["breakdown"],
-            })
+            scored_products.append(
+                {
+                    **candidate,
+                    "final_score": score_result["total"],
+                    "score_breakdown": score_result["breakdown"],
+                }
+            )
 
         scored_products.sort(key=lambda x: x["final_score"], reverse=True)
         top_products = scored_products[:top_k]

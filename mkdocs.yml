@@ -80,6 +80,7 @@ plugins:
             CDC Sync: Đồng bộ CDC
             Pipeline: Pipeline
             Pipeline Flow: Luồng xử lý
+            Query Rewriting: Viết lại truy vấn
             Hybrid Retrieval: Truy xuất lai
             Guardrails: Guardrail
             Project Structure: Cấu trúc dự án
@@ -112,6 +113,7 @@ nav:
       - CDC Sync: architecture/cdc.md
       - Pipeline: architecture/pipeline.md
       - Pipeline Flow: architecture/pipeline-flow.md
+      - Query Rewriting: architecture/query-rewriting.md
       - Hybrid Retrieval: architecture/hybrid-retrieval.md
       - Guardrails: architecture/guardrails.md
       - Project Structure: architecture/structure.md

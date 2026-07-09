@@ -14,6 +14,7 @@ from src.retrieval.product_retriever import ProductRetriever
 from src.retrieval.es_keyword_search import ESKeywordSearch
 from src.retrieval.filter_engine import FilterEngine
 from src.retrieval.hybrid_search import HybridSearch
+from src.retrieval.query_rewriter import QueryRewriter
 from src.retrieval.reranker import CrossEncoderReranker
 from src.retrieval.similarity_scorer import SimilarityScorer
 from src.generation.llm_client import LLMClient
@@ -51,19 +52,21 @@ def get_embedder(config: PipelineConfig | None = None) -> ProductEmbedder:
         embedding_dim=cfg.embedding_dim,
         max_retries=0,
     )
-    env_var = ProductEmbedder.PROVIDER_API_KEY_ENV.get(
-        cfg.embedding_provider, "OPENAI_API_KEY"
-    )
+    env_var = ProductEmbedder.PROVIDER_API_KEY_ENV.get(cfg.embedding_provider, "OPENAI_API_KEY")
     keys = resolve_api_keys(env_var)
     if keys:
         logger.info(
             "Embedder ready: provider=%s model=%s (%d API key(s) from %s)",
-            cfg.embedding_provider, cfg.embedding_model, len(keys), env_var,
+            cfg.embedding_provider,
+            cfg.embedding_model,
+            len(keys),
+            env_var,
         )
     else:
         logger.warning(
             "No API key found in env var %s - embedding calls WILL fail. "
-            "Set it in .env and restart.", env_var,
+            "Set it in .env and restart.",
+            env_var,
         )
     embedder.setup(api_key=keys or [""])
     return embedder
@@ -79,11 +82,25 @@ def get_vector_store(config: PipelineConfig | None = None) -> VectorStore:
     )
     logger.info(
         "Connecting to vector store %s (table=%s, dim=%s)",
-        _mask_dsn(cfg.vector_db_url), cfg.collection_name, cfg.embedding_dim,
+        _mask_dsn(cfg.vector_db_url),
+        cfg.collection_name,
+        cfg.embedding_dim,
     )
     store.setup(dsn=cfg.vector_db_url)
     logger.info("Vector store connected")
     return store
+
+
+def get_query_rewriter(config: PipelineConfig | None = None) -> QueryRewriter | None:
+    """Create the query rewriter if enabled.
+
+    Returns None when ``use_query_rewrite`` is off, so ``ProductRetriever``
+    transparently skips the rewrite step (mirrors ``get_reranker``).
+    """
+    cfg = config or get_config()
+    if not cfg.use_query_rewrite:
+        return None
+    return QueryRewriter(max_variants=cfg.query_rewrite_max_variants)
 
 
 def get_retriever(config: PipelineConfig | None = None) -> ProductRetriever:
@@ -94,6 +111,7 @@ def get_retriever(config: PipelineConfig | None = None) -> ProductRetriever:
         vector_store=get_vector_store(cfg),
         filter_engine=FilterEngine(),
         scorer=SimilarityScorer(),
+        query_rewriter=get_query_rewriter(cfg),
     )
 
 
@@ -114,7 +132,8 @@ def get_keyword_backend(config: PipelineConfig | None = None) -> ESKeywordSearch
     except Exception as exc:
         logger.warning(
             "Elasticsearch unavailable at %s (%s) - falling back to in-memory BM25",
-            url, exc,
+            url,
+            exc,
         )
         return None
     logger.info("Keyword backend: Elasticsearch at %s (index=%s)", url, cfg.es_index)
@@ -201,12 +220,15 @@ def get_llm_client(config: PipelineConfig | None = None) -> LLMClient:
     if keys:
         logger.info(
             "LLM client ready: provider=%s model=%s (%d API key(s) from %s)",
-            cfg.llm_provider, cfg.llm_model, len(keys), env_var,
+            cfg.llm_provider,
+            cfg.llm_model,
+            len(keys),
+            env_var,
         )
     else:
         logger.warning(
-            "No API key found in env var %s - LLM calls WILL fail. "
-            "Set it in .env and restart.", env_var,
+            "No API key found in env var %s - LLM calls WILL fail. Set it in .env and restart.",
+            env_var,
         )
     client.setup(api_key=keys or [""])
     return client
