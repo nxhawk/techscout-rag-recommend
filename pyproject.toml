@@ -17,7 +17,7 @@ dependencies = [
     "openai>=1.12.0",
     "google-genai>=1.0.0",
     # Embedding & Vector DB (Postgres + pgvector)
-    "psycopg[binary]>=3.1.0",
+    "psycopg[binary]>=3.3.4",
     "pgvector>=0.3.0",
     # Keyword search & CDC sync (Elasticsearch + Kafka)
     "elasticsearch>=8.13.0,<9",
