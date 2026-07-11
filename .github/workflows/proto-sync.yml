@@ -1,0 +1,64 @@
+name: Sync proto & redeploy
+
+# Fired by techscout-protos when recommend.proto changes.
+# Pulls the new proto (submodule), REGENERATES the committed gRPC stubs, commits,
+# and pushes. The push triggers the existing docker.yml -> build ->
+# `service-updated` -> platform deploy.
+#
+# Requires secret PROTO_BOT_TOKEN: a PAT with `contents: write` on THIS repo.
+
+on:
+  repository_dispatch:
+    types: [proto-updated]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: proto-sync
+  cancel-in-progress: false
+
+env:
+  SUBMODULE_PATH: proto
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.PROTO_BOT_TOKEN }}
+
+      - name: Update proto submodule to latest main
+        run: git submodule update --remote --recursive "$SUBMODULE_PATH"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Regenerate gRPC stubs
+        run: |
+          uv python install 3.11
+          uv sync --group dev
+          bash scripts/gen_proto.sh
+
+      - name: Commit & push if anything changed
+        env:
+          CP_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name  "proto-bot"
+          git config user.email "proto-bot@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing changed — proto already in sync."
+            exit 0
+          fi
+          msg="chore(proto): sync to techscout-protos"
+          [ -n "${CP_SHA:-}" ] && msg="$msg@$CP_SHA"
+          git commit -m "$msg"
+          git push
+          echo "Pushed proto sync — docker.yml will build & redeploy."
