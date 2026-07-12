@@ -76,11 +76,28 @@ async def lifespan(app: FastAPI):
         except Exception:  # noqa: BLE001 - never let gRPC startup break HTTP
             logger.exception("gRPC server failed to start")
 
+    # Register {name, host, port, health} with the service-registry so the
+    # gateway can look this instance up by name instead of a hardcoded addr.
+    # Registered port is the gRPC port (what the gateway dials); health is the
+    # HTTP health endpoint. No-op if REGISTRY_URL is unset.
+    from src.registry.client import register_if_configured
+
+    service_host = os.getenv("SERVICE_HOST", "rag-recommend")
+    http_port = os.getenv("HTTP_PORT", "8000")
+    grpc_port = int(os.getenv("GRPC_PORT", "50052"))
+    registry_client = register_if_configured(
+        name=os.getenv("SERVICE_NAME", "rag-recommend"),
+        port=grpc_port,
+        health=f"http://{service_host}:{http_port}/health",
+    )
+
     try:
         yield
     finally:
         if grpc_server is not None:
             grpc_server.stop(grace=5)
+        if registry_client is not None:
+            await registry_client.stop()
 
 
 app = FastAPI(

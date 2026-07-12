@@ -149,6 +149,17 @@ The `product_catalog` table (Postgres) is the single source of truth. The CRUD A
 
 The pipeline layer ties everything together. The `RAGRouter` classifies incoming queries (recommend, compare, info, hybrid) and delegates to the appropriate pipeline. Each pipeline orchestrates the full flow from query to response.
 
+### Service discovery (`src/registry/`)
+
+Separate from the RAG pipeline: on startup, the FastAPI `lifespan` in
+`api/app.py` calls `src/registry/client.py:register_if_configured` to
+register `{name: "rag-recommend", host, port: <GRPC_PORT>, health:
+"http://<host>:<HTTP_PORT>/health"}` with the platform's `service-registry`
+(`REGISTRY_URL`), heartbeating every ~10s and deregistering on shutdown.
+The *gRPC* port is registered (what the gateway dials); `health` points at
+the HTTP port. Registration is skipped entirely if `REGISTRY_URL` is unset,
+so the service still runs standalone.
+
 ## See Also
 
 - [C4 Model](c4-model.md) — Context, Container, and Component diagrams of the system.

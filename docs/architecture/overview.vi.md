@@ -149,6 +149,17 @@ Bảng `product_catalog` (Postgres) là source of truth duy nhất. API CRUD (`/
 
 Tầng pipeline kết nối mọi thứ lại với nhau. `RAGRouter` phân loại các truy vấn đến (gợi ý, so sánh, thông tin, hybrid) và điều hướng tới pipeline phù hợp. Mỗi pipeline điều phối toàn bộ luồng từ truy vấn đến phản hồi.
 
+### Service discovery (`src/registry/`)
+
+Tách biệt với pipeline RAG: khi khởi động, `lifespan` của FastAPI trong
+`api/app.py` gọi `src/registry/client.py:register_if_configured` để đăng ký
+`{name: "rag-recommend", host, port: <GRPC_PORT>, health:
+"http://<host>:<HTTP_PORT>/health"}` với `service-registry` của platform
+(`REGISTRY_URL`), heartbeat mỗi ~10s và deregister khi shutdown. Port đăng ký
+là port *gRPC* (port gateway gọi vào); `health` trỏ tới port HTTP. Bỏ qua
+đăng ký hoàn toàn nếu `REGISTRY_URL` chưa set — service vẫn chạy độc lập
+bình thường.
+
 ## Xem thêm
 
 - [Mô hình C4](c4-model.vi.md) — sơ đồ Context, Container, và Component của hệ thống.

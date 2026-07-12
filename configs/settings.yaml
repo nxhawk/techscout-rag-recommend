@@ -2,6 +2,14 @@
 project_name: "RAG Product Recommendation"
 environment: "development"
 
+# Service discovery (see services/service-registry). Registers
+# {name, host, port, health} on start and heartbeats every ~10s; the gateway
+# resolves this service's gRPC address by name instead of a hardcoded addr.
+# Read from env (REGISTRY_URL / SERVICE_NAME / SERVICE_HOST), not this file.
+registry_url: ""  # REGISTRY_URL, e.g. http://service-registry:8500 (empty = skip registration)
+service_name: "rag-recommend"
+service_host: "rag-recommend"
+
 # LLM
 llm_provider: "gemini"
 llm_model: "gemini-2.5-flash"
