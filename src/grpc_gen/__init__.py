@@ -1,1 +1,1 @@
-"""Generated gRPC stubs (do not edit; run make proto)."""
+"""Generated gRPC stubs (do not edit; run scripts/gen_proto.sh)."""
