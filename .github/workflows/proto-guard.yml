@@ -1,0 +1,47 @@
+name: proto-guard
+
+# Bảo đảm submodule proto không bị sửa cục bộ và luôn ghim vào một commit
+# đã tồn tại trên techscout-protos@main (tránh bump con trỏ tới commit chưa push).
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proto-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.PROTO_BOT_TOKEN }}   # đọc submodule private techscout-protos
+      - name: Submodule proto phải sạch và ghim đúng techscout-protos@main
+        env:
+          GH_TOKEN: ${{ secrets.PROTO_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          fail=0
+          while IFS= read -r name; do
+            path=$(git config -f .gitmodules --get "submodule.$name.path")
+            url=$(git config -f .gitmodules --get "submodule.$name.url")
+            case "$url" in *techscout-protos*) : ;; *) continue ;; esac
+            echo "== $path ($url)"
+            git -C "$path" -c "http.https://github.com/.extraheader=$auth" fetch -q origin main
+            sha=$(git -C "$path" rev-parse HEAD)
+            if ! git -C "$path" merge-base --is-ancestor "$sha" origin/main; then
+              echo "  ✗ commit ghim $sha KHÔNG nằm trên techscout-protos@main (proto chưa push?)"
+              fail=1
+            fi
+            if [ -n "$(git -C "$path" status --porcelain)" ]; then
+              echo "  ✗ submodule có sửa đổi cục bộ — proto phải sửa ở techscout-protos"
+              fail=1
+            fi
+            [ "$fail" = 0 ] && echo "  ✓ OK"
+          done < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | sed -E 's/^submodule\.(.*)\.path .*/\1/')
+          exit $fail

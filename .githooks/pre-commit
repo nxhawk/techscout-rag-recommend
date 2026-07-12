@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Chặn commit khi submodule proto có sửa đổi cục bộ.
+# Proto phải được sửa ở repo techscout-protos (rồi chạy proto-sync),
+# KHÔNG sửa trực tiếp trong service này.
+set -euo pipefail
+
+dirty="$(git submodule foreach --quiet '
+  if [ -n "$(git status --porcelain)" ]; then echo "$sm_path"; fi
+')"
+
+if [ -n "$dirty" ]; then
+  echo "✗ pre-commit: submodule proto có sửa đổi cục bộ:"
+  echo "$dirty" | sed "s/^/    - /"
+  echo "  → Sửa proto ở repo techscout-protos, đừng sửa tại đây."
+  echo "  (Nếu thực sự cố ý, bỏ qua bằng: git commit --no-verify)"
+  exit 1
+fi
