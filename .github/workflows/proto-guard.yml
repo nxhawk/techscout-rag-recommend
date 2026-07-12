@@ -31,12 +31,17 @@ jobs:
             case "$url" in *techscout-protos*) : ;; *) continue ;; esac
             echo "== $path ($url)"
             # actions/checkout already injected credentials into the submodule
-            # config -> fetch directly; do NOT add our own extraheader (that
-            # produces a "Duplicate Authorization" header and a 400).
-            git -C "$path" fetch -q origin main
+            # config, so fetch directly (do NOT add our own extraheader, that
+            # would cause a "Duplicate Authorization" 400).
+            # Fetch FULL history of main (--unshallow): the submodule is cloned
+            # shallow (depth 1), so without this merge-base cannot see that the
+            # pinned commit is an ancestor of main.
+            git -C "$path" fetch -q --unshallow origin main 2>/dev/null \
+              || git -C "$path" fetch -q origin main
             sha=$(git -C "$path" rev-parse HEAD)
             if ! git -C "$path" merge-base --is-ancestor "$sha" FETCH_HEAD; then
-              echo "  x pinned commit $sha is NOT on techscout-protos@main (proto not pushed?)"
+              echo "  x pinned commit $sha is NOT reachable from techscout-protos@main"
+              echo "    (the proto commit was never pushed, or main was rewritten)"
               fail=1
             fi
             if [ -n "$(git -C "$path" status --porcelain)" ]; then
