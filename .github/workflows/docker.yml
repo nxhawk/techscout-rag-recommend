@@ -89,10 +89,17 @@ jobs:
             echo "::error::PLATFORM_DISPATCH_TOKEN secret is not set on this repo -- techscout-platform will never be notified. Add it in Settings > Secrets and variables > Actions."
             exit 1
           fi
-          curl -sS -f -X POST \
+          resp="$(mktemp)"
+          status="$(curl -sS -o "$resp" -w '%{http_code}' -X POST \
             -H "Authorization: token $TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/${{ github.repository_owner }}/techscout-platform/dispatches \
-            -d "{\"event_type\":\"service-updated\",\"client_payload\":{\"service\":\"rag-recommend\",\"sha\":\"${{ github.sha }}\"}}"
+            -d "{\"event_type\":\"service-updated\",\"client_payload\":{\"service\":\"rag-recommend\",\"sha\":\"${{ github.sha }}\"}}")"
+          echo "HTTP $status"
+          cat "$resp"
+          if [ "$status" -ge 300 ]; then
+            echo "::error::repository_dispatch to techscout-platform failed (HTTP $status, see response body above). If 403/404: PLATFORM_DISPATCH_TOKEN needs 'repo' scope (classic PAT) or 'Contents: Read and write' on techscout-platform (fine-grained PAT, and techscout-platform must be in that token's repository access list)."
+            exit 1
+          fi
           echo "Dispatched service-updated to techscout-platform."
