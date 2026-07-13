@@ -3,7 +3,7 @@ from concurrent import futures
 
 import grpc
 
-from src.grpc_gen import recommend_pb2, recommend_pb2_grpc
+from src.grpc_gen.techscout.recommend.v1 import recommend_pb2, recommend_pb2_grpc
 
 
 class _FakePipeline:

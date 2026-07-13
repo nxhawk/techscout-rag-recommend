@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from . import recommend_pb2 as recommend__pb2
+from . import recommend_pb2 as techscout_dot_recommend_dot_v1_dot_recommend__pb2
 
 GRPC_GENERATED_VERSION = '1.82.1'
 GRPC_VERSION = grpc.__version__
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in recommend_pb2_grpc.py depends on'
+        + ' but the generated code in techscout/recommend/v1/recommend_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -37,13 +37,13 @@ class RecommendServiceStub:
         """
         self.Recommend = channel.unary_unary(
                 '/techscout.recommend.v1.RecommendService/Recommend',
-                request_serializer=recommend__pb2.RecommendRequest.SerializeToString,
-                response_deserializer=recommend__pb2.RecommendResponse.FromString,
+                request_serializer=techscout_dot_recommend_dot_v1_dot_recommend__pb2.RecommendRequest.SerializeToString,
+                response_deserializer=techscout_dot_recommend_dot_v1_dot_recommend__pb2.RecommendResponse.FromString,
                 _registered_method=True)
         self.Compare = channel.unary_unary(
                 '/techscout.recommend.v1.RecommendService/Compare',
-                request_serializer=recommend__pb2.CompareRequest.SerializeToString,
-                response_deserializer=recommend__pb2.CompareResponse.FromString,
+                request_serializer=techscout_dot_recommend_dot_v1_dot_recommend__pb2.CompareRequest.SerializeToString,
+                response_deserializer=techscout_dot_recommend_dot_v1_dot_recommend__pb2.CompareResponse.FromString,
                 _registered_method=True)
 
 
@@ -68,13 +68,13 @@ def add_RecommendServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Recommend': grpc.unary_unary_rpc_method_handler(
                     servicer.Recommend,
-                    request_deserializer=recommend__pb2.RecommendRequest.FromString,
-                    response_serializer=recommend__pb2.RecommendResponse.SerializeToString,
+                    request_deserializer=techscout_dot_recommend_dot_v1_dot_recommend__pb2.RecommendRequest.FromString,
+                    response_serializer=techscout_dot_recommend_dot_v1_dot_recommend__pb2.RecommendResponse.SerializeToString,
             ),
             'Compare': grpc.unary_unary_rpc_method_handler(
                     servicer.Compare,
-                    request_deserializer=recommend__pb2.CompareRequest.FromString,
-                    response_serializer=recommend__pb2.CompareResponse.SerializeToString,
+                    request_deserializer=techscout_dot_recommend_dot_v1_dot_recommend__pb2.CompareRequest.FromString,
+                    response_serializer=techscout_dot_recommend_dot_v1_dot_recommend__pb2.CompareResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -103,8 +103,8 @@ class RecommendService:
             request,
             target,
             '/techscout.recommend.v1.RecommendService/Recommend',
-            recommend__pb2.RecommendRequest.SerializeToString,
-            recommend__pb2.RecommendResponse.FromString,
+            techscout_dot_recommend_dot_v1_dot_recommend__pb2.RecommendRequest.SerializeToString,
+            techscout_dot_recommend_dot_v1_dot_recommend__pb2.RecommendResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -130,8 +130,8 @@ class RecommendService:
             request,
             target,
             '/techscout.recommend.v1.RecommendService/Compare',
-            recommend__pb2.CompareRequest.SerializeToString,
-            recommend__pb2.CompareResponse.FromString,
+            techscout_dot_recommend_dot_v1_dot_recommend__pb2.CompareRequest.SerializeToString,
+            techscout_dot_recommend_dot_v1_dot_recommend__pb2.CompareResponse.FromString,
             options,
             channel_credentials,
             insecure,
