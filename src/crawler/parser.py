@@ -14,7 +14,7 @@ def make_soup(html: str) -> BeautifulSoup:
     """Build a BeautifulSoup tree, preferring lxml with a stdlib fallback."""
     try:
         return BeautifulSoup(html, "lxml")
-    except Exception:  # lxml not installed
+    except Exception:  # noqa: BLE001 - lxml not installed; fall back to the stdlib parser
         return BeautifulSoup(html, "html.parser")
 
 

@@ -2,7 +2,7 @@
 Storage - Lưu kết quả crawl ra đĩa (JSON) trong data/raw/crawled.
 """
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from src.crawler.models import CrawlResult
@@ -27,7 +27,7 @@ class CrawlStorage:
         source_dir = self.output_dir / result.source
         source_dir.mkdir(parents=True, exist_ok=True)
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
         run_file = source_dir / f"{timestamp}.json"
         with open(run_file, "w", encoding="utf-8") as f:
             json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)

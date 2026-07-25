@@ -1,5 +1,6 @@
 """User Intent Parser - Phân tích ý định người dùng từ câu hỏi."""
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 
 @dataclass
@@ -16,7 +17,7 @@ class UserIntent:
 class UserIntentParser:
     """Parse user queries to extract structured intent."""
 
-    USE_CASE_KEYWORDS = {
+    USE_CASE_KEYWORDS: ClassVar[dict[str, list[str]]] = {
         "gaming": ["gaming", "game", "chơi game", "pubg", "liên quân"],
         "photography": ["chụp ảnh", "camera", "quay phim", "selfie"],
         "work": ["công việc", "văn phòng", "office", "làm việc", "excel"],
@@ -24,7 +25,7 @@ class UserIntentParser:
         "entertainment": ["giải trí", "xem phim", "youtube", "tiktok"],
     }
 
-    PRIORITY_KEYWORDS = {
+    PRIORITY_KEYWORDS: ClassVar[dict[str, list[str]]] = {
         "battery": ["pin trâu", "pin lâu", "pin khỏe", "dung lượng pin"],
         "display": ["màn đẹp", "màn hình", "display", "amoled", "oled"],
         "performance": ["mạnh", "nhanh", "hiệu năng", "chip", "mượt"],

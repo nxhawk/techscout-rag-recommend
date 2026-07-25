@@ -2,6 +2,7 @@
 HTTP Client - Wrapper httpx có retry, rate limit và kiểm tra robots.txt.
 """
 import asyncio
+from typing import Self
 
 import httpx
 from tenacity import (
@@ -151,7 +152,7 @@ class HttpClient:
         """Close the underlying sync client."""
         self._sync_client.close()
 
-    def __enter__(self) -> "HttpClient":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc) -> None:

@@ -11,7 +11,6 @@ from src.retrieval.query_rewriter import (
     TypoCorrector,
 )
 
-
 # --------------------------------------------------------------- normalize
 
 

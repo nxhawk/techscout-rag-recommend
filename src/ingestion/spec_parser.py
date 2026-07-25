@@ -2,7 +2,7 @@
 Spec Parser - Parse và chuẩn hóa thông số kỹ thuật sản phẩm.
 """
 import re
-from typing import Any
+from typing import Any, ClassVar
 
 from src.constants import SPEC_FIELD_ALIASES
 
@@ -25,7 +25,7 @@ _KEY_MAP["bo_nho"] = "storage"
 class SpecParser:
     """Parse and normalize product specifications."""
 
-    UNIT_MAP = {
+    UNIT_MAP: ClassVar[dict[str, str]] = {
         "gb": "GB", "tb": "TB", "mb": "MB",
         "mah": "mAh", "inch": "inch", "\"": "inch",
         "mp": "MP", "hz": "Hz", "ghz": "GHz",

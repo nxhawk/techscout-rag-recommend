@@ -1,6 +1,7 @@
 """Guardrails - Safety checks va validation cho LLM output."""
 import json
 import re
+from typing import ClassVar
 
 from src.constants import MAX_QUERY_LENGTH
 
@@ -9,7 +10,7 @@ class Guardrails:
     """Validate and sanitize LLM inputs and outputs."""
 
     # Cac pattern co the gay hai hoac sai lech
-    INJECTION_PATTERNS = [
+    INJECTION_PATTERNS: ClassVar[list[str]] = [
         r"ignore previous instructions",
         r"ignore all previous",
         r"disregard.*instructions",

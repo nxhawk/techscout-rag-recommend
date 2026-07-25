@@ -46,7 +46,7 @@ class RegistryClient:
             while not self._stop.is_set():
                 try:
                     await asyncio.wait_for(self._stop.wait(), timeout=HEARTBEAT_INTERVAL_S)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
                 if self._stop.is_set():
                     break

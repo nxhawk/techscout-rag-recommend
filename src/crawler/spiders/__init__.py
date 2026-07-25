@@ -12,4 +12,4 @@ SPIDER_REGISTRY: dict[str, type[BaseSpider]] = {
     CellphonesSpider.name: CellphonesSpider,
 }
 
-__all__ = ["BaseSpider", "TgddSpider", "CellphonesSpider", "SPIDER_REGISTRY"]
+__all__ = ["SPIDER_REGISTRY", "BaseSpider", "CellphonesSpider", "TgddSpider"]

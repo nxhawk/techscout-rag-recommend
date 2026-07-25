@@ -2,8 +2,8 @@
 
 import pytest
 
-from src.sync.events import ChangeEvent, content_hash
 from src.sync.embedding_worker import EmbeddingSyncer
+from src.sync.events import ChangeEvent, content_hash
 from src.sync.indexer_worker import SearchIndexer
 
 

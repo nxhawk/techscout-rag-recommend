@@ -128,7 +128,7 @@ class ESKeywordSearch:
         """True when the cluster is reachable."""
         try:
             return bool(self.client is not None and self.client.ping())
-        except Exception:
+        except Exception:  # noqa: BLE001 - probe boundary: any failure means unreachable
             return False
 
     # ---------------------------------------------------------------- search

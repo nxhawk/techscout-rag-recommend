@@ -16,7 +16,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         try:
             return await call_next(request)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - request boundary: must not leak any exception
             logger.error(f"Unhandled error: {exc}\n{traceback.format_exc()}")
             return JSONResponse(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

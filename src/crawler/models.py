@@ -2,7 +2,7 @@
 Models - Cấu trúc dữ liệu cho kết quả crawl.
 """
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 @dataclass
@@ -45,7 +45,7 @@ class CrawledProduct:
     review_count: int = 0
     reviews: list[Review] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
-    crawled_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    crawled_at: str = field(default_factory=lambda: datetime.now(tz=UTC).isoformat())
 
     def to_dict(self) -> dict:
         """Serialize to a plain dict for JSON storage (nested reviews included)."""
@@ -59,7 +59,7 @@ class CrawlResult:
     source: str
     products: list[CrawledProduct] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-    started_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    started_at: str = field(default_factory=lambda: datetime.now(tz=UTC).isoformat())
     finished_at: str = ""
 
     @property

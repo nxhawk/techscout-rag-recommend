@@ -1,5 +1,5 @@
 """Tests for RAGRouter."""
-from src.pipeline.rag_router import RAGRouter, QueryType
+from src.pipeline.rag_router import QueryType, RAGRouter
 
 
 def test_recommend_query():

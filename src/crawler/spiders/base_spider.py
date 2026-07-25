@@ -173,14 +173,14 @@ class BaseSpider(ABC):
                 continue
             try:
                 product = self.parse_detail(html, url)
-            except Exception as exc:  # keep the run going on a single bad page
+            except Exception as exc:  # noqa: BLE001 - keep the run going on a single bad page
                 self.logger.warning("parse_detail failed for %s: %s", url, exc)
                 continue
             if product is not None:
                 try:
                     product.reviews = self.collect_reviews(product, html)
                     product.review_count = product.review_count or len(product.reviews)
-                except Exception as exc:  # reviews are best-effort
+                except Exception as exc:  # noqa: BLE001 - reviews are best-effort
                     self.logger.warning("collect_reviews failed for %s: %s", url, exc)
             yield product
 

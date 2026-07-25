@@ -34,7 +34,7 @@ class RecommendServicer(recommend_pb2_grpc.RecommendServiceServicer):
 
             pipeline = get_cached_recommend_pipeline()
             result = pipeline.run(request.query, top_k=request.top_k or 5)
-        except Exception as exc:  # noqa: BLE001 - surface as gRPC status
+        except Exception as exc:
             logger.exception("gRPC Recommend failed")
             context.abort(grpc.StatusCode.INTERNAL, str(exc))
             return recommend_pb2.RecommendResponse()
@@ -50,7 +50,7 @@ class RecommendServicer(recommend_pb2_grpc.RecommendServiceServicer):
 
             pipeline = get_cached_compare_pipeline()
             result = pipeline.run(request.query, product_ids=list(request.product_ids))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("gRPC Compare failed")
             context.abort(grpc.StatusCode.INTERNAL, str(exc))
             return recommend_pb2.CompareResponse()

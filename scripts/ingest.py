@@ -24,11 +24,11 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.catalog.product_repository import ProductRepository
-from src.ingestion.product_loader import ProductLoader
-from src.ingestion.data_cleaner import DataCleaner
-from src.ingestion.chunker import ProductChunker
 from src.embedding.product_embedder import ProductEmbedder
 from src.embedding.vector_store import VectorStore
+from src.ingestion.chunker import ProductChunker
+from src.ingestion.data_cleaner import DataCleaner
+from src.ingestion.product_loader import ProductLoader
 from src.pipeline.config import PipelineConfig
 from src.sync.chunk_builder import build_chunk_payload
 from src.utils.helpers import resolve_api_keys
@@ -62,7 +62,7 @@ def _index_elasticsearch(config: PipelineConfig, ids, texts, metadatas) -> None:
         indexed = es.upsert_chunks(ids, texts, metadatas)
         es.refresh()
         logger.info(f"Indexed {indexed} chunks into Elasticsearch")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - optional step: CDC workers rebuild the index
         logger.warning(
             f"Elasticsearch indexing skipped ({exc}) - "
             "the CDC sync workers will build the index from the snapshot."

@@ -1,5 +1,6 @@
 """Search Route - POST /api/search"""
 from fastapi import APIRouter
+
 from api.schemas import SearchRequest, SearchResponse
 
 router = APIRouter()

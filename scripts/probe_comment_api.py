@@ -54,10 +54,10 @@ PROBES: dict[str, str] = {
         "product", _BASE_FIELDS + " rating star point score is_rating rating_value"
     ),
     "root_field_discovery": (
-        'query R { rating(productId: %d, currentPage: 1) { total } }' % PRODUCT_ID
+        f"query R {{ rating(productId: {PRODUCT_ID}, currentPage: 1) {{ total }} }}"
     ),
     "root_field_discovery2": (
-        'query R { review(productId: %d, currentPage: 1) { total } }' % PRODUCT_ID
+        f"query R {{ review(productId: {PRODUCT_ID}, currentPage: 1) {{ total }} }}"
     ),
 }
 

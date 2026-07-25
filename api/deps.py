@@ -5,24 +5,25 @@ import os
 import re
 import time
 from functools import lru_cache
-from src.utils.helpers import resolve_api_keys
+
+from api.paths import SETTINGS_PATH
 from src.catalog.product_repository import ProductRepository
-from src.pipeline.config import PipelineConfig
 from src.embedding.product_embedder import ProductEmbedder
 from src.embedding.vector_store import VectorStore
-from src.retrieval.product_retriever import ProductRetriever
+from src.generation.llm_client import LLMClient
+from src.pipeline.compare.comparator import ProductComparator
+from src.pipeline.compare_pipeline import ComparePipeline
+from src.pipeline.config import PipelineConfig
+from src.pipeline.recommend.engine import RecommendEngine
+from src.pipeline.recommend_pipeline import RecommendPipeline
 from src.retrieval.es_keyword_search import ESKeywordSearch
 from src.retrieval.filter_engine import FilterEngine
 from src.retrieval.hybrid_search import HybridSearch
+from src.retrieval.product_retriever import ProductRetriever
 from src.retrieval.query_rewriter import QueryRewriter
 from src.retrieval.reranker import CrossEncoderReranker
 from src.retrieval.similarity_scorer import SimilarityScorer
-from src.generation.llm_client import LLMClient
-from src.pipeline.recommend.engine import RecommendEngine
-from src.pipeline.recommend_pipeline import RecommendPipeline
-from src.pipeline.compare.comparator import ProductComparator
-from src.pipeline.compare_pipeline import ComparePipeline
-from api.paths import SETTINGS_PATH
+from src.utils.helpers import resolve_api_keys
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def _mask_dsn(dsn: str) -> str:
     return re.sub(r"//([^:/@]+):[^@]+@", r"//\1:***@", dsn)
 
 
-@lru_cache()
+@lru_cache
 def get_config() -> PipelineConfig:
     """Get pipeline configuration (cached)."""
     return PipelineConfig.from_yaml(str(SETTINGS_PATH))
@@ -129,7 +130,7 @@ def get_keyword_backend(config: PipelineConfig | None = None) -> ESKeywordSearch
     backend = ESKeywordSearch(url=url, index_name=cfg.es_index)
     try:
         backend.setup()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - optional backend: any failure degrades to BM25
         logger.warning(
             "Elasticsearch unavailable at %s (%s) - falling back to in-memory BM25",
             url,
@@ -167,7 +168,7 @@ def get_searcher(config: PipelineConfig | None = None) -> ProductRetriever | Hyb
         return searcher
     try:
         searcher.setup()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - optional index: any failure degrades to semantic
         logger.warning(
             "BM25 index build failed (%s) - falling back to semantic-only retrieval",
             exc,
@@ -176,7 +177,7 @@ def get_searcher(config: PipelineConfig | None = None) -> ProductRetriever | Hyb
     return searcher
 
 
-@lru_cache()
+@lru_cache
 def get_cached_product_repository() -> ProductRepository:
     """Cached repository for the product CRUD routes (source of truth).
 
@@ -243,7 +244,7 @@ def get_recommend_pipeline(config: PipelineConfig | None = None) -> RecommendPip
     return RecommendPipeline(recommend_engine=engine, llm_client=llm)
 
 
-@lru_cache()
+@lru_cache
 def get_cached_recommend_pipeline() -> RecommendPipeline:
     """Cached, zero-arg recommend pipeline provider for FastAPI Depends().
 
@@ -271,7 +272,7 @@ def get_compare_pipeline(config: PipelineConfig | None = None) -> ComparePipelin
     )
 
 
-@lru_cache()
+@lru_cache
 def get_cached_compare_pipeline() -> ComparePipeline:
     """Cached, zero-arg compare pipeline provider for FastAPI Depends().
 

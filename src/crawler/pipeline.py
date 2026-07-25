@@ -1,7 +1,7 @@
 """
 Pipeline - Điều phối quá trình crawl: spider -> product -> lưu trữ.
 """
-from datetime import datetime
+from datetime import UTC, datetime
 
 from src.crawler.config import CrawlerConfig
 from src.crawler.exceptions import CrawlerError
@@ -53,7 +53,7 @@ class CrawlPipeline:
                 if product is not None:
                     result.products.append(product)
 
-        result.finished_at = datetime.now().isoformat()
+        result.finished_at = datetime.now(tz=UTC).isoformat()
         self.storage.save(result)
         logger.info("[%s] done: %d products, %d errors", spider.name, result.count, len(result.errors))
         return result

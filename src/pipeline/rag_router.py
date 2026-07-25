@@ -3,6 +3,7 @@ RAG Router - Phân loại câu hỏi và route đến pipeline phù hợp.
 """
 import re
 from enum import Enum
+from typing import ClassVar
 
 
 class QueryType(Enum):
@@ -15,19 +16,19 @@ class QueryType(Enum):
 class RAGRouter:
     """Route queries to the appropriate pipeline."""
 
-    RECOMMEND_PATTERNS = [
+    RECOMMEND_PATTERNS: ClassVar[list[str]] = [
         r"gợi ý", r"nên mua", r"tư vấn", r"recommend",
         r"muốn mua", r"tìm .* phù hợp", r"cho tôi .* tốt",
         r"suggest", r"đề xuất",
     ]
 
-    COMPARE_PATTERNS = [
+    COMPARE_PATTERNS: ClassVar[list[str]] = [
         r"so sánh", r"compare", r"hay\b", r"vs\.?",
         r"khác nhau", r"tốt hơn", r"nào hơn",
         r"chọn .* hay", r"giữa .* và",
     ]
 
-    INFO_PATTERNS = [
+    INFO_PATTERNS: ClassVar[list[str]] = [
         r"thông số", r"giá", r"specs", r"cấu hình",
         r"bao nhiêu", r"chi tiết", r"review",
     ]

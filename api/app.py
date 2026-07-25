@@ -9,10 +9,10 @@ from fastapi import FastAPI
 
 from api.metrics import setup_metrics
 from api.paths import PROJECT_ROOT, REQUIRED_CONFIG_PATHS
-from api.routes.recommend import router as recommend_router
 from api.routes.compare import router as compare_router
-from api.routes.search import router as search_router
 from api.routes.products import router as products_router
+from api.routes.recommend import router as recommend_router
+from api.routes.search import router as search_router
 
 # Configure application logging (uvicorn only configures its own loggers).
 # Short timestamps and one line per event keep the console readable.
@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI):
             from src.grpc_server.server import serve_in_thread
 
             grpc_server = serve_in_thread()
-        except Exception:  # noqa: BLE001 - never let gRPC startup break HTTP
+        except Exception:
             logger.exception("gRPC server failed to start")
 
     # Register {name, host, port, health} with the service-registry so the

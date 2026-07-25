@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Optional
+from typing import Any, ClassVar
 
 from src.constants import (
     DEFAULT_COLLECTION_NAME,
@@ -112,7 +112,7 @@ class VectorStore:
         self,
         query_embedding: list[float],
         n_results: int = 10,
-        where: Optional[dict] = None,
+        where: dict | None = None,
     ) -> dict:
         """Query similar documents by cosine distance.
 
@@ -215,9 +215,9 @@ class VectorStore:
             self.conn = None
 
     # Whitelisted comparison operators for numeric metadata filters.
-    _OPERATORS = {"$eq": "=", "$lt": "<", "$lte": "<=", "$gt": ">", "$gte": ">="}
+    _OPERATORS: ClassVar[dict[str, str]] = {"$eq": "=", "$lt": "<", "$lte": "<=", "$gt": ">", "$gte": ">="}
 
-    def _build_where_sql(self, where: Optional[dict]) -> tuple[str, list[Any]]:
+    def _build_where_sql(self, where: dict | None) -> tuple[str, list[Any]]:
         """Translate a metadata filter dict into a SQL WHERE clause.
 
         Supports simple equality filters (``{"brand": "Apple"}``), numeric

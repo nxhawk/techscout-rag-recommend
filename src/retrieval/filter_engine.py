@@ -2,7 +2,7 @@
 Filter Engine - Trích xuất điều kiện lọc từ câu hỏi tự nhiên.
 """
 import re
-from typing import Any
+from typing import Any, ClassVar
 
 from src.constants import (
     GOOD_RATING_THRESHOLD,
@@ -15,12 +15,12 @@ from src.constants import (
 class FilterEngine:
     """Extract filter conditions from natural language queries."""
 
-    BRAND_KEYWORDS = [
+    BRAND_KEYWORDS: ClassVar[list[str]] = [
         "apple", "samsung", "xiaomi", "oppo", "vivo", "realme",
         "huawei", "sony", "lg", "asus", "dell", "hp", "lenovo",
     ]
 
-    CATEGORY_MAP = {
+    CATEGORY_MAP: ClassVar[dict[str, str]] = {
         "điện thoại": Category.SMARTPHONE.value, "phone": Category.SMARTPHONE.value,
         "laptop": Category.LAPTOP.value, "máy tính xách tay": Category.LAPTOP.value,
         "tai nghe": Category.HEADPHONE.value, "earbuds": Category.HEADPHONE.value,

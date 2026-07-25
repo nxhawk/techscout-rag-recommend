@@ -61,6 +61,13 @@ line-length = 100
 # Generated gRPC stubs are not hand-maintained.
 extend-exclude = ["**/grpc_gen/**"]
 
+[tool.ruff.lint.per-file-ignores]
+# B008: FastAPI's documented idiom puts `Depends(...)`/`Query(...)` calls in
+# argument defaults so the framework can resolve dependencies per request.
+# Ruff lists this as a known false positive for FastAPI; rewriting these calls
+# out of the defaults would break dependency injection.
+"api/routes/*.py" = ["B008"]
+
 [tool.bandit]
 # B608: SQL table names are interpolated from trusted internal config, while all
 # runtime values are passed as parameterized %s placeholders (no user input in

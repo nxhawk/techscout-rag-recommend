@@ -4,8 +4,9 @@ Config - Cấu hình cho module crawler.
 Loaded from configs/crawler.yaml. Mirrors the PipelineConfig pattern used in
 src/pipeline/config.py.
 """
-import yaml
 from dataclasses import dataclass, field
+
+import yaml
 
 
 @dataclass

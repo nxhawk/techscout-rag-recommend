@@ -7,8 +7,9 @@ ids, upsert/delete semantics), so redelivery after a crash is harmless.
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from src.sync.events import ChangeEvent, parse_debezium_message
 

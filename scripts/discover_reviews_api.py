@@ -85,7 +85,7 @@ def snapshot_response(response: Response) -> dict[str, Any] | None:
         return None
     try:
         body = response.text()
-    except Exception:  # binary/aborted bodies are irrelevant here
+    except Exception:  # noqa: BLE001 - binary/aborted bodies are irrelevant here
         return None
     if not body or not looks_review_related(response.url, body):
         return None
@@ -107,7 +107,7 @@ def click_rating_widget(page: Page) -> None:
             locator.scroll_into_view_if_needed(timeout=3000)
             locator.click(timeout=3000)
             page.wait_for_timeout(2000)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 - probe many selectors, skip the ones absent
             continue
     for selector in RATING_CLICK_SELECTORS:
         try:
@@ -115,7 +115,7 @@ def click_rating_widget(page: Page) -> None:
             locator.scroll_into_view_if_needed(timeout=2000)
             locator.click(timeout=2000)
             page.wait_for_timeout(2000)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 - probe many selectors, skip the ones absent
             continue
 
 
@@ -131,7 +131,7 @@ def dump_introspection(page: Page) -> None:
             response.text(), encoding="utf-8"
         )
         print(f"Introspection: HTTP {response.status}")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - exploration script: report and move on
         print(f"Introspection failed: {exc}", file=sys.stderr)
 
 
@@ -143,7 +143,7 @@ def save_raw_html(page: Page, url: str) -> None:
             response.text(), encoding="utf-8"
         )
         print(f"Raw HTML saved: HTTP {response.status}")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - exploration script: report and move on
         print(f"Raw HTML fetch failed: {exc}", file=sys.stderr)
 
 
@@ -175,7 +175,7 @@ def discover(product_urls: list[str]) -> list[dict[str, Any]]:
             print(f"Loading {url}")
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - skip unreachable pages, keep the run going
                 print(f"  navigation failed: {exc}", file=sys.stderr)
                 continue
             # Scroll stepwise so lazy sections (incl. the review widget) mount.

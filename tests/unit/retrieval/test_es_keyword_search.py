@@ -1,5 +1,7 @@
 """Unit tests for the ES keyword backend (query building + HybridSearch wiring)."""
 
+from typing import Any, ClassVar
+
 from src.retrieval.es_keyword_search import build_bool_query
 from src.retrieval.hybrid_search import HybridSearch
 
@@ -60,8 +62,8 @@ class _FakeRetriever:
 
 
 class TestHybridSearchWithPrefilterBackend:
-    SEMANTIC = [{"id": "a_description", "score": 0.9, "metadata": {}}]
-    KEYWORD = [{"id": "b_description", "document": "d", "metadata": {}, "bm25_score": 3.2}]
+    SEMANTIC: ClassVar[list[dict[str, Any]]] = [{"id": "a_description", "score": 0.9, "metadata": {}}]
+    KEYWORD: ClassVar[list[dict[str, Any]]] = [{"id": "b_description", "document": "d", "metadata": {}, "bm25_score": 3.2}]
 
     def test_filters_are_passed_to_backend(self):
         backend = _PrefilterBackend(results=self.KEYWORD)

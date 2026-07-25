@@ -86,7 +86,7 @@ class HybridSearch:
             # Degrade to semantic-only on failure - never break the request.
             try:
                 return self.bm25.search(query, top_k=self.keyword_candidates, filters=filters)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - degrade to semantic-only, never break request
                 logger.warning("Keyword backend failed (%s) - semantic only", exc)
                 return []
 

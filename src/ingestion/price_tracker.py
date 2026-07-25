@@ -2,7 +2,7 @@
 Price Tracker - Theo dõi và cập nhật giá sản phẩm.
 """
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -20,7 +20,7 @@ class PriceTracker:
         history.append({
             "price": price,
             "source": source,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(tz=UTC).isoformat(),
         })
         with open(history_file, "w", encoding="utf-8") as f:
             json.dump(history, f, ensure_ascii=False, indent=2)

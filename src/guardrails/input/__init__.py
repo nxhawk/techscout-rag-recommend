@@ -12,11 +12,11 @@ from src.guardrails.input.injection import InjectionGuardrail
 from src.guardrails.input.normalize import NormalizeGuardrail, normalize_text
 
 __all__ = [
-    "NormalizeGuardrail",
-    "InjectionGuardrail",
     "HeuristicGuardrail",
-    "normalize_text",
+    "InjectionGuardrail",
+    "NormalizeGuardrail",
     "build_input_chain",
+    "normalize_text",
 ]
 
 
