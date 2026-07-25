@@ -4,6 +4,13 @@ Filter Engine - Trích xuất điều kiện lọc từ câu hỏi tự nhiên.
 import re
 from typing import Any
 
+from src.constants import (
+    GOOD_RATING_THRESHOLD,
+    PRICE_BAND_LOWER_FACTOR,
+    PRICE_BAND_UPPER_FACTOR,
+    Category,
+)
+
 
 class FilterEngine:
     """Extract filter conditions from natural language queries."""
@@ -14,10 +21,10 @@ class FilterEngine:
     ]
 
     CATEGORY_MAP = {
-        "điện thoại": "smartphone", "phone": "smartphone",
-        "laptop": "laptop", "máy tính xách tay": "laptop",
-        "tai nghe": "headphone", "earbuds": "headphone",
-        "máy tính bảng": "tablet", "tablet": "tablet",
+        "điện thoại": Category.SMARTPHONE.value, "phone": Category.SMARTPHONE.value,
+        "laptop": Category.LAPTOP.value, "máy tính xách tay": Category.LAPTOP.value,
+        "tai nghe": Category.HEADPHONE.value, "earbuds": Category.HEADPHONE.value,
+        "máy tính bảng": Category.TABLET.value, "tablet": Category.TABLET.value,
     }
 
     def extract_filters(self, query: str) -> dict[str, Any]:
@@ -46,7 +53,7 @@ class FilterEngine:
     def _extract_price(self, query: str) -> dict | None:
         patterns = [
             # Vietnamese: "tầm/dưới/trên/từ X đến Y triệu"
-            (r"tầm\s+(\d+)\s*triệu", lambda m: {"price_min": int(m.group(1)) * 800_000, "price_max": int(m.group(1)) * 1_200_000}),
+            (r"tầm\s+(\d+)\s*triệu", lambda m: {"price_min": int(int(m.group(1)) * 1_000_000 * PRICE_BAND_LOWER_FACTOR), "price_max": int(int(m.group(1)) * 1_000_000 * PRICE_BAND_UPPER_FACTOR)}),
             (r"dưới\s+(\d+)\s*triệu", lambda m: {"price_max": int(m.group(1)) * 1_000_000}),
             (r"trên\s+(\d+)\s*triệu", lambda m: {"price_min": int(m.group(1)) * 1_000_000}),
             (r"từ\s+(\d+)\s*đến\s+(\d+)\s*triệu", lambda m: {"price_min": int(m.group(1)) * 1_000_000, "price_max": int(m.group(2)) * 1_000_000}),
@@ -55,7 +62,7 @@ class FilterEngine:
             (r"(?:under|below|less than)\s+(\d+)\s*(?:million|mil|tr)\b", lambda m: {"price_max": int(m.group(1)) * 1_000_000}),
             (r"(?:over|above|more than)\s+(\d+)\s*(?:million|mil|tr)\b", lambda m: {"price_min": int(m.group(1)) * 1_000_000}),
             (r"from\s+(\d+)\s*to\s+(\d+)\s*(?:million|mil|tr)\b", lambda m: {"price_min": int(m.group(1)) * 1_000_000, "price_max": int(m.group(2)) * 1_000_000}),
-            (r"around\s+(\d+)\s*(?:million|mil|tr)\b", lambda m: {"price_min": int(m.group(1)) * 800_000, "price_max": int(m.group(1)) * 1_200_000}),
+            (r"around\s+(\d+)\s*(?:million|mil|tr)\b", lambda m: {"price_min": int(int(m.group(1)) * 1_000_000 * PRICE_BAND_LOWER_FACTOR), "price_max": int(int(m.group(1)) * 1_000_000 * PRICE_BAND_UPPER_FACTOR)}),
         ]
         for pattern, extractor in patterns:
             match = re.search(pattern, query)
@@ -77,5 +84,5 @@ class FilterEngine:
 
     def _extract_rating(self, query: str) -> float | None:
         if any(kw in query for kw in ["đánh giá tốt", "rating cao", "được đánh giá cao"]):
-            return 4.0
+            return GOOD_RATING_THRESHOLD
         return None

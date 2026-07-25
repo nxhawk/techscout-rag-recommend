@@ -12,7 +12,7 @@ import logging
 import re
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.deps import get_cached_product_repository
 from api.schemas import (
@@ -37,7 +37,11 @@ def _generate_product_id(name: str) -> str:
     return f"{slug}-{uuid.uuid4().hex[:8]}"
 
 
-@router.post("/products", response_model=ProductMutationResponse, status_code=201)
+@router.post(
+    "/products",
+    response_model=ProductMutationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_product(
     request: ProductCreateRequest,
     repo: ProductRepository = Depends(get_cached_product_repository),
@@ -48,7 +52,7 @@ def create_product(
     created = repo.create(product)
     if not created:
         raise HTTPException(
-            status_code=409,
+            status_code=status.HTTP_409_CONFLICT,
             detail=f"Sản phẩm '{product['product_id']}' đã tồn tại.",
         )
     logger.info("Catalog: created product %s", product["product_id"])
@@ -67,10 +71,16 @@ def update_product(
     """Cập nhật sản phẩm (partial update - chỉ các trường được gửi lên)."""
     fields = request.model_dump(exclude_unset=True)
     if not fields:
-        raise HTTPException(status_code=422, detail="Không có trường nào để cập nhật.")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Không có trường nào để cập nhật.",
+        )
     updated = repo.update(product_id, fields)
     if updated is None:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy sản phẩm '{product_id}'.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy sản phẩm '{product_id}'.",
+        )
     logger.info("Catalog: updated product %s (fields=%s)", product_id, sorted(fields))
     return ProductMutationResponse(
         product_id=product_id,
@@ -86,7 +96,10 @@ def delete_product(
     """Xóa sản phẩm khỏi catalog (CDC sẽ gỡ khỏi các index tìm kiếm)."""
     deleted = repo.delete(product_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy sản phẩm '{product_id}'.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy sản phẩm '{product_id}'.",
+        )
     logger.info("Catalog: deleted product %s", product_id)
     return ProductMutationResponse(
         product_id=product_id,
@@ -102,7 +115,10 @@ def get_product(
     """Lấy thông tin một sản phẩm."""
     product = repo.get(product_id)
     if product is None:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy sản phẩm '{product_id}'.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy sản phẩm '{product_id}'.",
+        )
     return ProductResponse(product=product)
 
 

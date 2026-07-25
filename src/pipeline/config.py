@@ -2,8 +2,19 @@
 Config - Cấu hình pipeline.
 """
 
-import yaml
 from dataclasses import dataclass
+
+import yaml
+
+from src.constants import (
+    DEFAULT_COLLECTION_NAME,
+    DEFAULT_EMBEDDING_DIM,
+    DEFAULT_ES_INDEX,
+    DEFAULT_ES_URL,
+    DEFAULT_LLM_MODEL,
+    DEFAULT_POSTGRES_DSN,
+    DEFAULT_RERANKER_MODEL,
+)
 
 
 @dataclass
@@ -12,7 +23,7 @@ class PipelineConfig:
 
     # LLM
     llm_provider: str = "anthropic"
-    llm_model: str = "claude-sonnet-4-6"
+    llm_model: str = DEFAULT_LLM_MODEL
     llm_max_tokens: int = 2048
     llm_temperature: float = 0.3
 
@@ -22,9 +33,9 @@ class PipelineConfig:
 
     # Vector Store (Postgres + pgvector)
     vector_db: str = "pgvector"
-    vector_db_url: str = "postgresql://postgres:postgres@localhost:5432/rag_products"
-    embedding_dim: int = 1536
-    collection_name: str = "products"
+    vector_db_url: str = DEFAULT_POSTGRES_DSN
+    embedding_dim: int = DEFAULT_EMBEDDING_DIM
+    collection_name: str = DEFAULT_COLLECTION_NAME
 
     # Retrieval
     top_k_retrieve: int = 20
@@ -36,7 +47,7 @@ class PipelineConfig:
     rrf_k: int = 60
     keyword_candidates: int = 50
     use_reranker: bool = False
-    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranker_model: str = DEFAULT_RERANKER_MODEL
 
     # Query rewriting (normalize/typo-correct/expand/intent-aware). Cheap and
     # local (no extra API calls) so it defaults on. `query_rewrite_max_variants`
@@ -49,8 +60,8 @@ class PipelineConfig:
     # (CDC-synced index, pre-filtered). Env overrides: KEYWORD_BACKEND,
     # ELASTICSEARCH_URL.
     keyword_backend: str = "memory"
-    es_url: str = "http://localhost:9200"
-    es_index: str = "product_chunks"
+    es_url: str = DEFAULT_ES_URL
+    es_index: str = DEFAULT_ES_INDEX
 
     # CDC sync (Debezium -> Kafka -> workers). Env overrides:
     # KAFKA_BOOTSTRAP_SERVERS.

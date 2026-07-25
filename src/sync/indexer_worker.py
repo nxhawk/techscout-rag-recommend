@@ -9,6 +9,7 @@ the same index state.
 
 import logging
 
+from src.constants import DebeziumOp
 from src.ingestion.chunker import ProductChunker
 from src.retrieval.es_keyword_search import ESKeywordSearch
 from src.sync.chunk_builder import build_chunk_payload
@@ -27,7 +28,7 @@ class SearchIndexer:
     def handle(self, event: ChangeEvent) -> str:
         """Apply one event. Returns the action taken (for logs/tests)."""
         product_id = event.product_id
-        if event.op == "d":
+        if event.op == DebeziumOp.DELETE:
             deleted = self.es.delete_product(product_id)
             logger.info("ES: deleted product %s (%d chunks)", product_id, deleted)
             return "deleted"

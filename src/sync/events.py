@@ -16,6 +16,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from src.constants import DebeziumOp
+
 # Fields whose change requires re-embedding (they appear in chunk text).
 # avg_rating / review_count do appear in the review chunk text, but they
 # drift constantly - re-embedding on every rating tick would burn embedding
@@ -35,7 +37,7 @@ TEXT_FIELDS = (
 METADATA_FIELDS = ("price", "avg_rating", "review_count")
 
 _JSONB_FIELDS = ("specifications", "pros", "cons", "tags")
-_SUPPORTED_OPS = frozenset({"c", "u", "d", "r"})
+_SUPPORTED_OPS = frozenset(op.value for op in DebeziumOp)
 
 
 @dataclass

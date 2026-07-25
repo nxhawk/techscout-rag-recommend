@@ -9,11 +9,16 @@ import os
 import re
 from typing import Any, Optional
 
+from src.constants import (
+    DEFAULT_COLLECTION_NAME,
+    DEFAULT_EMBEDDING_DIM,
+    DEFAULT_POSTGRES_DSN,
+)
 from src.utils.helpers import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DSN = "postgresql://postgres:postgres@localhost:5432/rag_products"
+DEFAULT_DSN = DEFAULT_POSTGRES_DSN
 
 
 class VectorStore:
@@ -22,8 +27,8 @@ class VectorStore:
     def __init__(
         self,
         provider: str = "pgvector",
-        collection_name: str = "products",
-        embedding_dim: int = 1536,
+        collection_name: str = DEFAULT_COLLECTION_NAME,
+        embedding_dim: int = DEFAULT_EMBEDDING_DIM,
     ):
         self.provider = provider
         self.collection_name = collection_name

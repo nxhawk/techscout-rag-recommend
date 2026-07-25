@@ -23,6 +23,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+from src.constants import Category
 from src.crawler.models import CrawledProduct, Review
 from src.crawler.parser import (
     clean_ws,
@@ -137,7 +138,7 @@ class CellphonesSpider(BaseSpider):
             source=self.name,
             source_url=url,
             brand=detect_brand(name),
-            category="smartphone",
+            category=Category.SMARTPHONE.value,
             price=price,
             specifications=specs,
             spec_groups=spec_groups,

@@ -10,8 +10,10 @@ import re
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-_MAX_QUERY_LENGTH = 2000
-_MAX_PRODUCT_IDS = 5
+from src.constants import MAX_COMPARE_PRODUCTS, MAX_QUERY_LENGTH
+
+_MAX_QUERY_LENGTH = MAX_QUERY_LENGTH
+_MAX_PRODUCT_IDS = MAX_COMPARE_PRODUCTS
 _PRODUCT_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 # Whitelisted filter keys accepted by the recommend pipeline's filter engine.

@@ -7,6 +7,7 @@ Query → [Input Guardrail] → Intent Parser → Filter → Retrieve → Score 
 import logging
 import time
 
+from src.constants import BRAND_MAX_LEN, PRODUCT_NAME_MAX_LEN
 from src.generation.llm_client import LLMClient
 from src.generation.prompt_templates.recommend_prompt import (
     SYSTEM_PROMPT,
@@ -163,8 +164,11 @@ class RecommendPipeline:
         lines = []
         for i, p in enumerate(products[: cfg.max_context_products], 1):
             meta = p.get("metadata", {})
-            name = sanitize_text_field(meta.get("name", "N/A"), max_len=200) or "N/A"
-            brand = sanitize_text_field(meta.get("brand", ""), max_len=100)
+            name = (
+                sanitize_text_field(meta.get("name", "N/A"), max_len=PRODUCT_NAME_MAX_LEN)
+                or "N/A"
+            )
+            brand = sanitize_text_field(meta.get("brand", ""), max_len=BRAND_MAX_LEN)
             lines.append(
                 f"{i}. {name} - {brand} "
                 f"| Giá: {meta.get('price', 'N/A')} | Rating: {meta.get('avg_rating', 'N/A')} "

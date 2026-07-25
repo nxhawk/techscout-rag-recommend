@@ -2,6 +2,8 @@
 Pros/Cons Extractor - Trích xuất ưu/nhược điểm từ review và specs.
 """
 
+from src.constants import BUDGET_TIER_MAX_PRICE, PREMIUM_TIER_MIN_PRICE
+
 
 class ProsConsExtractor:
     """Extract pros and cons from reviews and specifications."""
@@ -22,9 +24,9 @@ class ProsConsExtractor:
         price = product.get("price", 0)
 
         # Simple heuristic rules — will be enhanced by LLM
-        if price and price < 8_000_000:
+        if price and price < BUDGET_TIER_MAX_PRICE:
             best_for.append("Sinh viên / Ngân sách hạn chế")
-        elif price and price > 25_000_000:
+        elif price and price > PREMIUM_TIER_MIN_PRICE:
             best_for.append("Người dùng cao cấp")
 
         return best_for

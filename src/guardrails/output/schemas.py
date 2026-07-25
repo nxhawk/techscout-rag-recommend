@@ -8,9 +8,11 @@ contract changes, update the matching model here.
 
 from pydantic import BaseModel, Field, field_validator
 
-_MAX_ITEMS = 20  # hard ceiling; business-logic trimming (top_k etc.) happens
-# in the pipeline/grounding layer, not here.
-_MAX_LIST_STR_ITEMS = 15
+from src.constants import MAX_LIST_STR_ITEMS, MAX_OUTPUT_ITEMS
+
+_MAX_ITEMS = MAX_OUTPUT_ITEMS  # hard ceiling; business-logic trimming (top_k
+# etc.) happens in the pipeline/grounding layer, not here.
+_MAX_LIST_STR_ITEMS = MAX_LIST_STR_ITEMS
 
 
 def _strip(value: object) -> object:

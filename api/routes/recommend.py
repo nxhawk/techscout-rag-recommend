@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.deps import get_cached_recommend_pipeline
 from api.metrics import PIPELINE_LATENCY, RECOMMEND_ERRORS
@@ -58,12 +58,16 @@ def recommend_products(
         # RecommendRequest validators as a plain 422 before we get here.
         logger.info("Recommend blocked by input guardrail: %s", exc.reason)
         RECOMMEND_ERRORS.labels(reason="guardrail_input").inc()
-        raise HTTPException(status_code=422, detail=exc.reason) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.reason
+        ) from exc
     except Exception as exc:
         _log_pipeline_error(request.query, exc)
         # Split quota/429 from other backend failures for the error panel.
         RECOMMEND_ERRORS.labels(reason="quota" if is_rate_limit_error(exc) else "error").inc()
-        raise HTTPException(status_code=503, detail=_error_detail(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_error_detail(exc)
+        ) from exc
 
     # The LLM returns {"recommendations": [...], "summary": "..."} per the
     # prompt contract; on unparseable output the parser falls back to

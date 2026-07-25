@@ -1,6 +1,8 @@
 """Guardrails - Safety checks va validation cho LLM output."""
-import re
 import json
+import re
+
+from src.constants import MAX_QUERY_LENGTH
 
 
 class Guardrails:
@@ -28,8 +30,11 @@ class Guardrails:
         if not query or not query.strip():
             return {"valid": False, "reason": "Query trong."}
 
-        if len(query) > 2000:
-            return {"valid": False, "reason": "Query qua dai (toi da 2000 ky tu)."}
+        if len(query) > MAX_QUERY_LENGTH:
+            return {
+                "valid": False,
+                "reason": f"Query qua dai (toi da {MAX_QUERY_LENGTH} ky tu).",
+            }
 
         query_lower = query.lower()
         for pattern in self.INJECTION_PATTERNS:

@@ -7,6 +7,13 @@ dataclass with sane defaults that callers can override (e.g. from
 
 from dataclasses import dataclass
 
+from src.constants import (
+    MAX_COMPARE_ITEMS,
+    MAX_COMPARE_PRODUCTS,
+    MAX_QUERY_LENGTH,
+    MAX_RECOMMENDATION_ITEMS,
+)
+
 
 @dataclass
 class GuardrailConfig:
@@ -14,7 +21,7 @@ class GuardrailConfig:
 
     # Input (query) limits
     min_query_length: int = 1
-    max_query_length: int = 2000
+    max_query_length: int = MAX_QUERY_LENGTH
     max_url_count: int = 3
     max_code_block_markers: int = 2  # 2 markers = 1 fenced ``` block
     repeated_char_threshold: int = 8  # e.g. "aaaaaaaa..." (8+ repeats)
@@ -25,12 +32,12 @@ class GuardrailConfig:
     max_context_products: int = 10
 
     # Output (LLM response) limits
-    max_recommendation_items: int = 10
-    max_compare_items: int = 10
+    max_recommendation_items: int = MAX_RECOMMENDATION_ITEMS
+    max_compare_items: int = MAX_COMPARE_ITEMS
     max_text_field_chars: int = 2000
 
     # Compare-specific
-    max_compare_products: int = 5
+    max_compare_products: int = MAX_COMPARE_PRODUCTS
 
     # Grounding (output/grounding.py): the prompt asks the LLM to copy a
     # product's `name` verbatim, but models still occasionally drop a

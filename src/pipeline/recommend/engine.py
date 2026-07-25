@@ -2,8 +2,9 @@
 
 import math
 
-from src.pipeline.recommend.user_intent_parser import UserIntentParser
+from src.constants import CANDIDATE_POOL_MULTIPLIER, RERANK_KEEP_MULTIPLIER
 from src.pipeline.recommend.scoring import ProductScorer
+from src.pipeline.recommend.user_intent_parser import UserIntentParser
 from src.retrieval.hybrid_search import HybridSearch
 from src.retrieval.product_retriever import ProductRetriever
 from src.retrieval.reranker import CrossEncoderReranker
@@ -37,12 +38,16 @@ class RecommendEngine:
             "use_case": intent.use_case,
             "priorities": intent.priorities,
         }
-        candidates = self.retriever.retrieve(query, top_k=top_k * 3, intent_hints=intent_hints)
+        candidates = self.retriever.retrieve(
+            query, top_k=top_k * CANDIDATE_POOL_MULTIPLIER, intent_hints=intent_hints
+        )
 
         if self.reranker is not None:
             # Cross-encoder prunes and re-orders the candidate pool; keep
             # 2x top_k so multi-criteria scoring still has room to reorder.
-            candidates = self.reranker.rerank(query, candidates, top_k=top_k * 2)
+            candidates = self.reranker.rerank(
+                query, candidates, top_k=top_k * RERANK_KEEP_MULTIPLIER
+            )
 
         scored_products = []
         for candidate in candidates:

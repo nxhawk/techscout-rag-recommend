@@ -18,7 +18,9 @@ import os
 import re
 from typing import Any
 
-DEFAULT_DSN = "postgresql://postgres:postgres@localhost:5432/rag_products"
+from src.constants import DEFAULT_POSTGRES_DSN
+
+DEFAULT_DSN = DEFAULT_POSTGRES_DSN
 
 # Columns in insert order. JSONB columns are serialized with json.dumps.
 _COLUMNS = (

@@ -22,6 +22,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import ClassVar
 
+from src.constants import DEFAULT_LLM_MODEL
 from src.utils.helpers import as_key_list, is_rate_limit_error, retry_delay_seconds
 
 
@@ -208,7 +209,7 @@ class LLMClient:
     def __init__(
         self,
         provider: str = "anthropic",
-        model: str = "claude-sonnet-4-6",
+        model: str = DEFAULT_LLM_MODEL,
         max_retries: int = 6,
     ):
         if provider not in _LLM_PROVIDERS:

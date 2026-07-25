@@ -3,17 +3,14 @@ Similarity Scorer - Tính điểm tương đồng tổng hợp.
 """
 import math
 
+from src.constants import MAX_RATING, POPULARITY_LOG_BASE, SIMILARITY_SCORE_WEIGHTS
+
 
 class SimilarityScorer:
     """Calculate composite similarity scores."""
 
     def __init__(self, weights: dict[str, float] | None = None):
-        self.weights = weights or {
-            "semantic": 0.5,
-            "price_match": 0.2,
-            "rating": 0.15,
-            "popularity": 0.15,
-        }
+        self.weights = weights or dict(SIMILARITY_SCORE_WEIGHTS)
 
     def compute_score(
         self,
@@ -39,7 +36,7 @@ class SimilarityScorer:
         return ratio
 
     def _rating_score(self, rating: float) -> float:
-        return min(rating / 5.0, 1.0)
+        return min(rating / MAX_RATING, 1.0)
 
     def _popularity_score(self, review_count: int) -> float:
-        return min(math.log(review_count + 1) / math.log(10000), 1.0)
+        return min(math.log(review_count + 1) / math.log(POPULARITY_LOG_BASE), 1.0)

@@ -1,5 +1,7 @@
 """Personalization - Cá nhân hóa gợi ý dựa trên lịch sử người dùng."""
 
+from src.constants import BRAND_MATCH_BOOST, CATEGORY_MATCH_BOOST
+
 
 class Personalization:
     """Personalize recommendations based on user history."""
@@ -26,7 +28,7 @@ class Personalization:
             return 1.0
         boost = 1.0
         if product.get("brand") in profile.get("preferred_brands", []):
-            boost += 0.1
+            boost += BRAND_MATCH_BOOST
         if product.get("category") in profile.get("preferred_categories", []):
-            boost += 0.05
+            boost += CATEGORY_MATCH_BOOST
         return boost

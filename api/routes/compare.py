@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.deps import get_cached_compare_pipeline
 from api.metrics import PIPELINE_LATENCY
@@ -39,7 +39,9 @@ def compare_products(
             result = pipeline.run(request.query, product_ids=request.product_ids)
     except InputGuardrailBlocked as exc:
         logger.info("Compare blocked by input guardrail: %s", exc.reason)
-        raise HTTPException(status_code=422, detail=exc.reason) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.reason
+        ) from exc
     except Exception as exc:
         if is_rate_limit_error(exc):
             summary = str(exc).splitlines()[0][:300]
@@ -48,11 +50,15 @@ def compare_products(
             )
         else:
             logger.exception("Compare pipeline failed for query: %s", request.query)
-        raise HTTPException(status_code=503, detail=_error_detail(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_error_detail(exc)
+        ) from exc
 
     if result.get("error"):
         # Business-rule guardrail: not enough valid products to compare.
-        raise HTTPException(status_code=422, detail=result["error"])
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result["error"]
+        )
 
     analysis = result.get("analysis") or {}
     return CompareResponse(

@@ -9,6 +9,7 @@ whole topic costs zero embedding calls when nothing changed.
 
 import logging
 
+from src.constants import DebeziumOp
 from src.embedding.product_embedder import ProductEmbedder
 from src.embedding.vector_store import VectorStore
 from src.ingestion.chunker import ProductChunker
@@ -34,7 +35,7 @@ class EmbeddingSyncer:
     def handle(self, event: ChangeEvent) -> str:
         """Apply one event. Returns the action taken (for logs/tests)."""
         product_id = event.product_id
-        if event.op == "d":
+        if event.op == DebeziumOp.DELETE:
             deleted = self.vector_store.delete_product(product_id)
             logger.info("pgvector: deleted product %s (%d chunks)", product_id, deleted)
             return "deleted"
@@ -68,7 +69,7 @@ class EmbeddingSyncer:
            content hash against what the vector store already has - snapshot
            replays of unchanged products cost no embedding call.
         """
-        if event.op == "u" and event.before is not None:
+        if event.op == DebeziumOp.UPDATE and event.before is not None:
             return text_changed(event.before, event.after)
         stored = self.vector_store.get_product_content_hash(event.product_id)
         return stored is None or stored != content_hash(event.after)

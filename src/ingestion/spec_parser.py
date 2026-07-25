@@ -4,6 +4,23 @@ Spec Parser - Parse và chuẩn hóa thông số kỹ thuật sản phẩm.
 import re
 from typing import Any
 
+from src.constants import SPEC_FIELD_ALIASES
+
+# SpecParser historically normalizes only this narrow subset of keys, unlike
+# SpecAligner (src/comparison/spec_aligner.py / src/pipeline/compare/spec_aligner.py)
+# which normalizes the full canonical SPEC_FIELD_ALIASES set. Keep behavior
+# unchanged by picking a documented subset here rather than adopting the
+# full canonical dict wholesale (which would additionally start normalizing
+# keys like "display"/"rom" that this parser previously left untouched).
+# "bo_nho" -> "storage" is an extra alias not present in the shared
+# SPEC_FIELD_ALIASES dict (SpecAligner uses "bo_nho_trong" instead), so it is
+# kept as a local addition here to preserve this parser's exact behavior.
+_KEY_MAP: dict[str, str] = {
+    key: SPEC_FIELD_ALIASES[key]
+    for key in ("pin", "dung_luong_pin", "man_hinh", "camera_sau")
+}
+_KEY_MAP["bo_nho"] = "storage"
+
 
 class SpecParser:
     """Parse and normalize product specifications."""
@@ -27,12 +44,7 @@ class SpecParser:
     def _normalize_key(self, key: str) -> str:
         """Normalize spec key names."""
         key = key.lower().strip().replace(" ", "_")
-        key_map = {
-            "pin": "battery", "dung_luong_pin": "battery",
-            "man_hinh": "screen_size", "bo_nho": "storage",
-            "ram": "ram", "camera_sau": "rear_camera",
-        }
-        return key_map.get(key, key)
+        return _KEY_MAP.get(key, key)
 
     def _normalize_value(self, value: Any) -> Any:
         """Normalize spec values with units."""

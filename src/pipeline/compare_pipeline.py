@@ -6,6 +6,7 @@ Query → [Input Guardrail] → Extract Products → Retrieve Specs → Align
 
 import logging
 
+from src.constants import PRODUCT_NAME_MAX_LEN
 from src.generation.llm_client import LLMClient
 from src.generation.prompt_templates.compare_prompt import (
     SYSTEM_PROMPT,
@@ -180,7 +181,9 @@ class ComparePipeline:
         cfg = self.guardrail_config
         lines = []
         for p in products:
-            name = sanitize_text_field(p.get("name", "N/A"), max_len=200) or "N/A"
+            name = (
+                sanitize_text_field(p.get("name", "N/A"), max_len=PRODUCT_NAME_MAX_LEN) or "N/A"
+            )
             description = sanitize_text_field(
                 p.get("description", ""), max_len=cfg.max_context_field_chars
             )
